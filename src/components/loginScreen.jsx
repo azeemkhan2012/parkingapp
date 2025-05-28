@@ -5,6 +5,7 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import { styles } from '../style/style';
 
@@ -23,8 +24,8 @@ const LoginScreen = () => {
 
   return (
     <View style={styles.container}>
+    <View style={styles.logoContainer}><Image style={styles.logo} source={require('../assets/logo.png')} /></View>
       <Text style={styles.title}>Login</Text>
-
       <TextInput
         style={styles.input}
         placeholder="Username"

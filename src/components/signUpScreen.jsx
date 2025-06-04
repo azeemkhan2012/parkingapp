@@ -146,7 +146,7 @@ const SignUpScreen = ({navigation}) => {
       {/** Footer */}
       <View style={{marginTop: 20, alignItems: 'center'}} >
         <Text>
-          Already have an account? <Text style={{color: 'blue'}} onPress={() => navigation.navigate('login')}>Log In</Text>
+          Already have an account? <Text style={{color: 'blue', cursor: 'pointer'}} onPress={() => navigation.navigate('login')}>Log In</Text>
         </Text>
       </View>
     </ScrollView>

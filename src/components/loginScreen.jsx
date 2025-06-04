@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { styles } from '../style/style';
 
-const LoginScreen = () => {
+const LoginScreen = ({navigation}) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
@@ -45,6 +45,11 @@ const LoginScreen = () => {
       <TouchableOpacity style={styles.button} onPress={handleLogin}>
         <Text style={styles.buttonText}>Log In</Text>
       </TouchableOpacity>
+      <View style={{marginTop: 20, alignItems: 'center'}} >
+              <Text>
+                Don't have an account? <Text style={{color: 'blue'}} onPress={() => navigation.navigate('signup')}>Sign up</Text>
+              </Text>
+            </View>
     </View>
   );
 };

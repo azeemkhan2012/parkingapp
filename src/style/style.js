@@ -1,29 +1,29 @@
 import {StyleSheet} from 'react-native';
 
-
 export const styles = StyleSheet.create({
-container: {
+  container: {
     flex: 1,
-    backgroundColor:'#F4F6F6',
+    backgroundColor: '#F4F6F6',
     justifyContent: 'center',
     padding: 20,
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color:'#27AE60',
+    color: '#27AE60',
     alignSelf: 'center',
     marginBottom: 30,
   },
   input: {
     backgroundColor: '#fff',
     borderStyle: 'solid',
-    borderColor: "grey",
+    borderColor: 'grey',
     borderWidth: 1,
     padding: 15,
     borderRadius: 50,
     marginBottom: 15,
     fontSize: 16,
+    color: '#000',
   },
   button: {
     backgroundColor: '#2ECC71',
@@ -38,13 +38,18 @@ container: {
     fontWeight: '600',
   },
   logoContainer: {
-    marginTop: 50,
+    // marginTop: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
-   logo: {
+  logo: {
     width: 150,
     height: 150,
-
+  },
+  error: {
+    color: 'red',
+    marginBottom: 10,
+    marginLeft: 10,
+    marginTop: -10,
   },
 });

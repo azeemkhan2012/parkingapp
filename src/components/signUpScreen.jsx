@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import {styles} from '../style/style';
 
-const SignUpScreen = () => {
+const SignUpScreen = ({navigation}) => {
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -144,9 +144,9 @@ const SignUpScreen = () => {
       </TouchableOpacity>
 
       {/** Footer */}
-      <View style={{marginTop: 20, alignItems: 'center'}}>
+      <View style={{marginTop: 20, alignItems: 'center'}} >
         <Text>
-          Already have an account? <Text style={{color: 'blue'}}>Log In</Text>
+          Already have an account? <Text style={{color: 'blue'}} onPress={() => navigation.navigate('login')}>Log In</Text>
         </Text>
       </View>
     </ScrollView>

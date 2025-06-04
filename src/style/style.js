@@ -23,6 +23,7 @@ export const styles = StyleSheet.create({
     borderRadius: 50,
     marginBottom: 15,
     fontSize: 16,
+    color: '#000',
   },
   button: {
     backgroundColor: '#2ECC71',
@@ -37,7 +38,7 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
   },
   logoContainer: {
-    marginTop: 50,
+    // marginTop: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -46,8 +47,9 @@ export const styles = StyleSheet.create({
     height: 150,
   },
   error: {
-    color: 'blue',
-    marginBottom: 15,
-    marginLeft:10,
+    color: 'red',
+    marginBottom: 10,
+    marginLeft: 10,
+    marginTop: -10,
   },
 });

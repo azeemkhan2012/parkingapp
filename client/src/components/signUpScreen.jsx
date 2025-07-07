@@ -54,7 +54,7 @@ const SignUpScreen = ({navigation}) => {
     validateField(name, value);
   };
 
-  const handleSignUp = () => {
+  const handleSignUp = async () => {
     const newErrors = {};
     Object.keys(form).forEach(key => {
       validateField(key, form[key]);
@@ -65,12 +65,26 @@ const SignUpScreen = ({navigation}) => {
       Alert.alert('Error', 'Please correct the errors in the form');
       return;
     }
-
-    // Success Alert
-    Alert.alert(
-      'Success',
-      `Sign-Up Successful!\n\nFirst Name: ${form.firstName}\nLast Name: ${form.lastName}\nEmail: ${form.email}\nPassword: ${form.password}`,
-    );
+    try {
+      const response = await fetch('http://10.0.2.2:5001/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.firstName + ' ' + form.lastName,
+          email: form.email,
+          password: form.password
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        Alert.alert('Success', 'Sign-Up Successful!');
+        navigation.navigate('login');
+      } else {
+        Alert.alert('Error', data.error || 'Registration failed');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Network error');
+    }
   };
 
   return (

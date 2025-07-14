@@ -102,9 +102,19 @@ app.post('/login', async (req, res) => {
 app.use(async (req, res, next) => {
   const spots = await db.all('SELECT * FROM spots');
   if (spots.length === 0) {
-    const locations = ['A1', 'A2', 'B1', 'B2', 'C1'];
+    // Example locations with coordinates
+    const locations = [
+      { location: 'A1', latitude: 37.78825, longitude: -122.4324 },
+      { location: 'A2', latitude: 37.78925, longitude: -122.4334 },
+      { location: 'B1', latitude: 37.79025, longitude: -122.4344 },
+      { location: 'B2', latitude: 37.79125, longitude: -122.4354 },
+      { location: 'C1', latitude: 37.79225, longitude: -122.4364 },
+    ];
     for (const loc of locations) {
-      await db.run('INSERT INTO spots (location, is_available) VALUES (?, 1)', [loc]);
+      await db.run(
+        'INSERT INTO spots (location, is_available, latitude, longitude) VALUES (?, 1, ?, ?)',
+        [loc.location, loc.latitude, loc.longitude]
+      );
     }
   }
   next();

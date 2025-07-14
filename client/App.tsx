@@ -13,6 +13,7 @@ import ForgotPasswordScreen from './src/components/ForgotPasswordScreen';
 // import HomePage from './src/components/homePage';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer } from '@react-navigation/native';
+import HomePage from './src/components/homePage';
 // import {NavigationContainer} from './node_modules/@react-navigation/native/lib/typescript/src';
 // import {createNativeStackNavigator} from './node_modules/@react-navigation/native-stack/lib/typescript/src';
 
@@ -31,7 +32,7 @@ function App(): React.JSX.Element {
         <Stack.Screen name="login" component={LoginScreen} />
         <Stack.Screen name="signup" component={SignUpScreen} />
         <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-        {/* <Stack.Screen name="home" component={HomePage} /> */}
+        <Stack.Screen name="home" component={HomePage} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -12,7 +12,9 @@ export async function initializeDB() {
     CREATE TABLE IF NOT EXISTS spots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       location TEXT NOT NULL,
-      is_available INTEGER NOT NULL DEFAULT 1
+      is_available INTEGER NOT NULL DEFAULT 1,
+      latitude REAL,
+      longitude REAL
     );
     CREATE TABLE IF NOT EXISTS bookings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

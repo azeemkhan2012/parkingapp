@@ -8,6 +8,7 @@ import {
   Image,
 } from 'react-native';
 import {styles} from '../style/style';
+import { signIn, getCurrentUser } from '../config/firebase';
 
 const LoginScreen = ({navigation}) => {
   const [email, setEmail] = useState('');
@@ -19,17 +20,12 @@ const LoginScreen = ({navigation}) => {
       return;
     }
     try {
-      const response = await fetch('http://10.0.2.2:5001/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({email, password}),
-      });
-      const data = await response.json();
-      if (response.ok) {
+      const result = await signIn(email, password);
+      if (result.success) {
         Alert.alert('Success', 'Login Successful!');
         navigation.navigate('home');
       } else {
-        Alert.alert('Error', data.error || 'Invalid credentials');
+        Alert.alert('Error', result.error || 'Invalid credentials');
       }
     } catch (error) {
       Alert.alert('Error', 'Network error');

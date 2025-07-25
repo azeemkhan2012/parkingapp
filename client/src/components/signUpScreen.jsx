@@ -9,6 +9,7 @@ import {
   ScrollView,
 } from 'react-native';
 import {styles} from '../style/style';
+import { signUp } from '../config/firebase';
 
 const SignUpScreen = ({navigation}) => {
   const [form, setForm] = useState({
@@ -66,21 +67,12 @@ const SignUpScreen = ({navigation}) => {
       return;
     }
     try {
-      const response = await fetch('http://10.0.2.2:5001/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: form.firstName + ' ' + form.lastName,
-          email: form.email,
-          password: form.password
-        })
-      });
-      const data = await response.json();
-      if (response.ok) {
+      const result = await signUp(form.email, form.password);
+      if (result.success) {
         Alert.alert('Success', 'Sign-Up Successful!');
         navigation.navigate('login');
       } else {
-        Alert.alert('Error', data.error || 'Registration failed');
+        Alert.alert('Error', result.error || 'Registration failed');
       }
     } catch (error) {
       Alert.alert('Error', 'Network error');

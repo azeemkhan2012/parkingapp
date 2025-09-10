@@ -17,10 +17,12 @@ import {
   getParkingSpots,
   bookParkingSpot,
   getCurrentUser,
+  signOut,
 } from '../config/firebase';
 import {Picker} from '@react-native-picker/picker';
 import {onSnapshot, collection} from 'firebase/firestore';
 import {db} from '../config/firebase';
+import {fetchSFparkSpots} from '../utils/sfpark';
 
 MapboxGL.setAccessToken(
   'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg',
@@ -32,7 +34,7 @@ const INITIAL_COORDINATE = {
   zoomLevel: 12,
 };
 
-const HomePage = () => {
+const HomePage = ({navigation}) => {
   const [search, setSearch] = useState('');
   const [spots, setSpots] = useState([]);
   const [selectedSpot, setSelectedSpot] = useState(null);
@@ -45,6 +47,7 @@ const HomePage = () => {
   const [maxPrice, setMaxPrice] = useState('');
   const [availability, setAvailability] = useState('all');
   const [parkingType, setParkingType] = useState('all');
+  const [useSFpark, setUseSFpark] = useState(false);
 
   // Get device location
   useEffect(() => {
@@ -86,20 +89,25 @@ const HomePage = () => {
   //   fetchSpots();
   // }, []);
   useEffect(() => {
-    // Listen for real-time updates
-    const unsubscribe = onSnapshot(
-      collection(db, 'parking_spots'),
-      snapshot => {
-        const spotsData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        console.log(spotsData, 'spotsData');
-        setSpots(spotsData);
-      },
-    );
-    return () => unsubscribe();
-  }, []);
+    if (useSFpark && userLocation) {
+      fetchSFparkSpots(userLocation.latitude, userLocation.longitude).then(
+        setSpots,
+      );
+    } else {
+      // Listen for Firestore updates
+      const unsubscribe = onSnapshot(
+        collection(db, 'parking_spots'),
+        snapshot => {
+          const spotsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          setSpots(spotsData);
+        },
+      );
+      return () => unsubscribe();
+    }
+  }, [useSFpark, userLocation]);
 
   const filteredSpots = spots.filter(spot => {
     const matchesSearch =
@@ -200,8 +208,29 @@ const HomePage = () => {
     );
   }
 
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      Alert.alert('Signed out', 'You have been logged out.');
+      // send user to the login screen and clear history
+      navigation.reset({index: 0, routes: [{name: 'login'}]});
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Failed to log out');
+    }
+  };
+
   return (
     <View style={styles.container}>
+      <View style={styles.actionsRow}>
+        <TouchableOpacity
+          style={styles.editBtn}
+          onPress={() => navigation.navigate('UserProfileEdit')}>
+          <Text style={styles.actionsText}>Edit Profile</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Text style={styles.actionsText}>Log Out</Text>
+        </TouchableOpacity>
+      </View>
       <View style={styles.topBar}>
         <TextInput
           style={styles.searchBar}
@@ -552,6 +581,31 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginBottom: 4,
+  },
+
+  actionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+  },
+  editBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#28a745',
+    borderRadius: 8,
+  },
+  logoutBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#FF3B30',
+    borderRadius: 8,
+  },
+  actionsText: {
+    color: '#fff',
+    fontWeight: 'bold',
   },
 });
 

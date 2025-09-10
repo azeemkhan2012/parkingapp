@@ -8,29 +8,40 @@ import {
   Image,
 } from 'react-native';
 import {styles} from '../style/style';
-import { signIn, getCurrentUser } from '../config/firebase';
+import { signInWithIdentifier, getUserProfile, ensureUsernameMapping} from '../config/firebase';
 
 const LoginScreen = ({navigation}) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password');
-      return;
-    }
+  const idTrim = (email || '').trim();   // username OR email
+  const passTrim = (password || '').trim();
+  if (!idTrim || !passTrim) { Alert.alert('Error','Please enter username/email and password'); return; }
+
+  const result = await signInWithIdentifier(idTrim, passTrim);
+  if (result.success) {
     try {
-      const result = await signIn(email, password);
-      if (result.success) {
-        Alert.alert('Success', 'Login Successful!');
-        navigation.navigate('home');
-      } else {
-        Alert.alert('Error', result.error || 'Invalid credentials');
+      // if they logged in with email, backfill the username mapping
+      if (idTrim.includes('@')) {
+        const prof = await getUserProfile(result.user.uid);
+        if (prof.success && prof.userData?.username) {
+          await ensureUsernameMapping(result.user.uid, prof.userData.username, result.user.email);
+        }
       }
-    } catch (error) {
-      Alert.alert('Error', 'Network error');
-    }
-  };
+    } catch (_) {}
+    navigation.navigate('home');
+  } else {
+    const err = String(result.error || '');
+    const msg =
+      /username-not-found/i.test(err) ? 'No account with that username'
+      : /invalid-credential|wrong-password/i.test(err) ? 'Incorrect credentials'
+      : /user-not-found/i.test(err) ? 'No account with that email'
+      : /too-many-requests/i.test(err) ? 'Too many attempts. Try again later.'
+      : err;
+    Alert.alert('Error', msg);
+  }
+};
 
   return (
     <View style={styles.container}>

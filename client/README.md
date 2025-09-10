@@ -1,97 +1,104 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Parking App - Prototype Phase
 
-# Getting Started
+## Overview
+A React Native parking application with comprehensive user registration, login, and profile management functionality.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## Features Implemented
 
-## Step 1: Start Metro
+### 1. User Registration System
+- **Complete Registration Form** with all required fields:
+  - First Name
+  - Last Name
+  - Username (unique, alphanumeric + underscore only)
+  - Email Address
+  - Full Address
+  - Mobile Number
+  - Password
+  - Confirm Password
+- **System-generated User ID** (Firebase UID)
+- **Real-time validation** for all fields
+- **Username availability checking**
+- **Data persistence** to Firebase Firestore
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+### 2. User Login System
+- **Username-based authentication** (instead of email)
+- **Secure password verification**
+- **Session management** with React Native AsyncStorage
+- **Navigation to home page** after successful login
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+### 3. Profile Management
+- **Edit Profile functionality** accessible after login
+- **Update all registration information**:
+  - Personal details
+  - Contact information
+  - Address
+  - Mobile number
+- **Real-time validation** during editing
+- **Profile data persistence** to database
 
-```sh
-# Using npm
-npm start
+### 4. Technical Implementation
+- **Firebase Authentication** for user management
+- **Firestore Database** for user profile storage
+- **React Navigation** for screen management
+- **Form validation** with error handling
+- **Loading states** and user feedback
+- **Responsive design** for mobile devices
 
-# OR using Yarn
-yarn start
+## Database Schema
+
+### Users Collection
+```javascript
+{
+  userId: "firebase_uid",
+  firstName: "string",
+  lastName: "string", 
+  username: "string (unique)",
+  email: "string",
+  address: "string",
+  mobileNo: "string",
+  createdAt: "timestamp",
+  updatedAt: "timestamp"
+}
 ```
 
-## Step 2: Build and run your app
+## Navigation Flow
+1. **Login Screen** → Enter username and password
+2. **Signup Screen** → Complete registration form
+3. **Home Screen** → Access to parking features + Edit Profile button
+4. **Profile Edit Screen** → Modify user information
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## Setup Instructions
 
-### Android
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-```sh
-# Using npm
-npm run android
+2. Configure Firebase:
+   - Update `src/config/firebase.js` with your Firebase credentials
+   - Enable Authentication and Firestore in Firebase Console
 
-# OR using Yarn
-yarn android
-```
+3. Run the application:
+   ```bash
+   # For Android
+   npm run android
+   
+   # For iOS
+   npm run ios
+   ```
 
-### iOS
+## Prototype Requirements Met
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+✅ **Create a registration page with all the important fields**  
+✅ **Users can register using user details like user id (system-generated), name, username, email, address, mobile No. etc.**  
+✅ **All the data on the registration page should be saved in the database**  
+✅ **Create a login page**  
+✅ **Users can login using usernames and passwords**  
+✅ **After login in the application, the user can edit registration information**
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+## Additional Features
+- **Parking spot management** with Mapbox integration
+- **Location services** and geocoding
+- **SFpark data integration** for public parking information
+- **Real-time filtering** and search capabilities
+- **Responsive UI** with modern design patterns

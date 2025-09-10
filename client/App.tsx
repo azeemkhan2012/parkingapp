@@ -10,6 +10,8 @@ import 'react-native-gesture-handler';
 import LoginScreen from './src/components/loginScreen';
 import SignUpScreen from './src/components/signUpScreen';
 import ForgotPasswordScreen from './src/components/ForgotPasswordScreen';
+import UserProfileEdit from './src/components/UserProfileEdit';
+import NetworkTest from './src/components/NetworkTest';
 // import HomePage from './src/components/homePage';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer } from '@react-navigation/native';
@@ -33,6 +35,8 @@ function App(): React.JSX.Element {
         <Stack.Screen name="signup" component={SignUpScreen} />
         <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
         <Stack.Screen name="home" component={HomePage} />
+        <Stack.Screen name="UserProfileEdit" component={UserProfileEdit} />
+        <Stack.Screen name="NetworkTest" component={NetworkTest} />
       </Stack.Navigator>
     </NavigationContainer>
   );

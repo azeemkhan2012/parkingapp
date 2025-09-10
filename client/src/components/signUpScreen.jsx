@@ -31,6 +31,7 @@ const SignUpScreen = ({navigation}) => {
   });
 
   const [errors, setErrors] = useState({});
+  const [isLoading, setIsLoading] = useState(false);
 
   const isValidEmail = email => /\S+@\S+\.\S+/.test(email);
 
@@ -78,11 +79,13 @@ const SignUpScreen = ({navigation}) => {
   };
 
   const handleChange = (name, value) => {
+    
     setForm(prev => ({...prev, [name]: value}));
     validateField(name, value);
   };
 
   const handleSignUp = async () => {
+    setIsLoading(true)
     const newErrors = {};
     Object.keys(form).forEach(key => {
       validateField(key, form[key]);
@@ -102,6 +105,7 @@ const SignUpScreen = ({navigation}) => {
       }
       const result = await signUp(form.email, form.password);
       if (result.success) {
+        setIsLoading(true)
         // Save extended profile in Firestore
         const user = getCurrentUser();
         if (user) {
@@ -119,6 +123,7 @@ const SignUpScreen = ({navigation}) => {
         Alert.alert('Success', 'Sign-Up Successful!');
         navigation.navigate('login');
       } else {
+        setIsLoading(false)
         Alert.alert('Error', result.error || 'Registration failed');
       }
     } catch (error) {
@@ -225,8 +230,8 @@ const SignUpScreen = ({navigation}) => {
         <Text style={styles.error}>{errors.confirmPassword}</Text>
       ) : null}
 
-      <TouchableOpacity style={styles.button} onPress={handleSignUp}>
-        <Text style={styles.buttonText}>Sign Up</Text>
+      <TouchableOpacity style={styles.button} disabled={isLoading} onPress={handleSignUp}>
+        <Text style={styles.buttonText}>{isLoading ? 'loading...' : 'Sign Up'}</Text>
       </TouchableOpacity>
 
       <View style={{marginTop: 20, alignItems: 'center'}}>

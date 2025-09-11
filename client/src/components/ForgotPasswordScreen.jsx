@@ -1,28 +1,31 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
-import { styles } from '../style/style';
+import React, {useState} from 'react';
+import {View, Text, TextInput, TouchableOpacity, Alert} from 'react-native';
+import {styles} from '../style/style';
+import {requestPasswordReset} from '../config/firebase';
 
-const ForgotPasswordScreen = ({ navigation }) => {
+const ForgotPasswordScreen = ({navigation}) => {
   const [email, setEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
+  // const [newPassword, setNewPassword] = useState('');
 
   const handleReset = async () => {
-    if (!email || !newPassword) {
+    if (!email) {
       Alert.alert('Error', 'Please enter both email and new password');
       return;
     }
     try {
-      const response = await fetch('http://10.0.2.2:5001/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, newPassword })
-      });
-      const data = await response.json();
-      if (response.ok) {
-        Alert.alert('Success', 'Password reset successful!');
-        navigation.navigate('login');
+      const response = await requestPasswordReset(email);
+      if (response.success) {
+        Alert.alert(
+          'Check your inbox',
+          'If an account exists for that email, a password reset link has been sent.',
+        );
+        navigation.goBack();
       } else {
-        Alert.alert('Error', data.error || 'Reset failed');
+        const msg = /auth\/invalid-email/i.test(res.error)
+          ? 'That email address is not valid.'
+          : 'If an account exists for that email, a reset link has been sent.';
+        Alert.alert('Password reset', msg);
+        navigation.goBack();
       }
     } catch (error) {
       Alert.alert('Error', 'Network error');
@@ -40,21 +43,20 @@ const ForgotPasswordScreen = ({ navigation }) => {
         autoCapitalize="none"
         keyboardType="email-address"
       />
-      <TextInput
+      {/* <TextInput
         style={styles.input}
         placeholder="New Password"
         secureTextEntry
         value={newPassword}
         onChangeText={setNewPassword}
-      />
+      /> */}
       <TouchableOpacity style={styles.button} onPress={handleReset}>
         <Text style={styles.buttonText}>Reset Password</Text>
       </TouchableOpacity>
       <View style={{marginTop: 20, alignItems: 'center'}}>
         <Text
           style={{color: 'blue', cursor: 'pointer'}}
-          onPress={() => navigation.navigate('login')}
-        >
+          onPress={() => navigation.navigate('login')}>
           Back to Login
         </Text>
       </View>
@@ -62,4 +64,4 @@ const ForgotPasswordScreen = ({ navigation }) => {
   );
 };
 
-export default ForgotPasswordScreen; 
+export default ForgotPasswordScreen;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, {useState} from 'react';
 import {
   View,
   Text,
@@ -7,19 +7,26 @@ import {
   Alert,
   Image,
 } from 'react-native';
-import { styles } from '../style/style';
-import { signInWithIdentifier, getUserProfile, ensureUsernameMapping } from '../config/firebase';
+import {styles} from '../style/style';
+import {
+  signInWithIdentifier,
+  getUserProfile,
+  ensureUsernameMapping,
+} from '../config/firebase';
 
-const LoginScreen = ({ navigation }) => {
+const LoginScreen = ({navigation}) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async () => {
-    setIsLoading(true)
-    const idTrim = (email || '').trim();   // username OR email
+    setIsLoading(true);
+    const idTrim = (email || '').trim(); // username OR email
     const passTrim = (password || '').trim();
-    if (!idTrim || !passTrim) { Alert.alert('Error', 'Please enter username/email and password'); return; }
+    if (!idTrim || !passTrim) {
+      Alert.alert('Error', 'Please enter username/email and password');
+      return;
+    }
 
     const result = await signInWithIdentifier(idTrim, passTrim);
     if (result.success) {
@@ -28,21 +35,28 @@ const LoginScreen = ({ navigation }) => {
         if (idTrim.includes('@')) {
           const prof = await getUserProfile(result.user.uid);
           if (prof.success && prof.userData?.username) {
-            await ensureUsernameMapping(result.user.uid, prof.userData.username, result.user.email);
+            await ensureUsernameMapping(
+              result.user.uid,
+              prof.userData.username,
+              result.user.email,
+            );
           }
         }
-      } catch (_) { }
-      setIsLoading(false)
+      } catch (_) {}
+      setIsLoading(false);
       navigation.navigate('home');
     } else {
-      setIsLoading(false)
+      setIsLoading(false);
       const err = String(result.error || '');
-      const msg =
-        /username-not-found/i.test(err) ? 'No account with that username'
-          : /invalid-credential|wrong-password/i.test(err) ? 'Incorrect credentials'
-            : /user-not-found/i.test(err) ? 'No account with that email'
-              : /too-many-requests/i.test(err) ? 'Too many attempts. Try again later.'
-                : err;
+      const msg = /username-not-found/i.test(err)
+        ? 'No account with that username'
+        : /invalid-credential|wrong-password/i.test(err)
+        ? 'Incorrect credentials'
+        : /user-not-found/i.test(err)
+        ? 'No account with that email'
+        : /too-many-requests/i.test(err)
+        ? 'Too many attempts. Try again later.'
+        : err;
       Alert.alert('Error', msg);
     }
   };
@@ -68,21 +82,26 @@ const LoginScreen = ({ navigation }) => {
         value={password}
         onChangeText={setPassword}
       />
-      <View style={{ alignItems: 'flex-end', marginBottom: 4 }}>
+      <View style={{alignItems: 'flex-end', marginBottom: 4}}>
         <Text
-          style={{ color: 'blue', cursor: 'pointer' }}
+          style={{color: 'blue', cursor: 'pointer'}}
           onPress={() => navigation.navigate('ForgotPassword')}>
           Forgot Password?
         </Text>
       </View>
-      <TouchableOpacity style={styles.button} disabled={isLoading} onPress={handleLogin}>
-        <Text style={styles.buttonText} >{isLoading ? 'loading...' : 'Log In'}</Text>
+      <TouchableOpacity
+        style={[styles.button, isLoading ? styles.buttonDisabled : null]}
+        disabled={isLoading}
+        onPress={handleLogin}>
+        <Text style={styles.buttonText}>
+          {isLoading ? 'loading...' : 'Log In'}
+        </Text>
       </TouchableOpacity>
-      <View style={{ marginTop: 20, alignItems: 'center' }}>
+      <View style={{marginTop: 20, alignItems: 'center'}}>
         <Text>
           Don't have an account?{' '}
           <Text
-            style={{ color: 'blue', cursor: 'pointer' }}
+            style={{color: 'blue', cursor: 'pointer'}}
             onPress={() => navigation.navigate('signup')}>
             Sign up
           </Text>

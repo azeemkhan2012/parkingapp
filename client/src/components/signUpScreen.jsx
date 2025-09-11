@@ -250,7 +250,7 @@ const SignUpScreen = ({navigation}) => {
       ) : null}
 
       <TouchableOpacity
-        style={styles.button}
+        style={[styles.button, isLoading ? styles.buttonDisabled : null]}
         disabled={isLoading}
         onPress={handleSignUp}>
         <Text style={styles.buttonText}>

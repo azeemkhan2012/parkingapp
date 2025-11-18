@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, useRef} from 'react';
 import {
   View,
   TextInput,
@@ -64,10 +64,18 @@ const HomePage = ({navigation}) => {
       }
       Geolocation.getCurrentPosition(
         position => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
           setUserLocation({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
+            latitude: lat,
+            longitude: lon,
           });
+          // zoom closer to user's location on app open
+          setZoom(15);
+          // try to get a readable address to show in the search bar
+          console.log(lat,lon,"kjdhfhsdgfugsdufgysdgyyg");
+          
+          reverseGeocode(lat, lon).catch(() => {});
           setLoading(false);
         },
         error => {
@@ -128,14 +136,23 @@ const HomePage = ({navigation}) => {
   // Geocode address to coordinates (using Mapbox API)
   const geocodeAddress = async address => {
     try {
+      // Use LocationIQ forward geocoding (search) to get coordinates
       const resp = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+        `https://api.locationiq.com/v1/search.php?key=pk.8d19b1ef7170725976c6f53e5c97774c&q=${encodeURIComponent(
           address,
-        )}.json?access_token=pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg`,
+        )}&format=json&limit=1`,
       );
       const data = await resp.json();
-      if (data.features && data.features.length > 0) {
-        const [longitude, latitude] = data.features[0].center;
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0];
+        const latitude = parseFloat(item.lat);
+        const longitude = parseFloat(item.lon);
+        setUserLocation({latitude, longitude});
+        setZoom(15);
+      } else if (data && data.lat && data.lon) {
+        // sometimes LocationIQ may return an object
+        const latitude = parseFloat(data.lat);
+        const longitude = parseFloat(data.lon);
         setUserLocation({latitude, longitude});
         setZoom(15);
       } else {
@@ -143,6 +160,25 @@ const HomePage = ({navigation}) => {
       }
     } catch (e) {
       Alert.alert('Error', 'Failed to search location.');
+    }
+  };
+
+  // Reverse geocode coordinates to a human-friendly place name (LocationIQ)
+  const reverseGeocode = async (latitude, longitude) => {
+    try {
+      const resp = await fetch(
+        `https://api.locationiq.com/v1/reverse.php?key=pk.8d19b1ef7170725976c6f53e5c97774c&lat=${encodeURIComponent(
+          latitude,
+        )}&lon=${encodeURIComponent(longitude)}&format=json`,
+      );
+      const data = await resp.json();
+      if (data) {
+        // LocationIQ returns display_name field
+        const name = data.display_name || (data.address && data.address.city) || '';
+        if (name) setSearch(name);
+      }
+    } catch (e) {
+      console.warn('Reverse geocode failed', e);
     }
   };
 
@@ -154,27 +190,52 @@ const HomePage = ({navigation}) => {
     }
     try {
       const resp = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-          text,
-        )}.json?autocomplete=true&access_token=pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg`,
+         `https://api.locationiq.com/v1/autocomplete?key=pk.8d19b1ef7170725976c6f53e5c97774c&q=${text}&limit=5&dedupe=1`,
       );
       const data = await resp.json();
-      if (data.features) {
-        setSuggestions(data.features);
-        setShowSuggestions(true);
+      // Normalize data from different providers:
+      // - LocationIQ autocomplete returns an Array of places (top-level array)
+      // - Mapbox returns an object with `features` array
+      let normalized = [];
+      if (Array.isArray(data)) {
+        normalized = data.map(item => ({
+          id: item.place_id || item.osm_id || `${item.lat}-${item.lon}`,
+          place_name: item.display_name || item.place_name || (item.address && item.address.name) || '',
+          lat: item.lat ? parseFloat(item.lat) : undefined,
+          lon: item.lon ? parseFloat(item.lon) : undefined,
+          raw: item,
+        }));
+      } else if (data && data.features) {
+        normalized = data.features.map(f => ({
+          id: f.id || f.place_id || `${f.center?.[1]}-${f.center?.[0]}`,
+          place_name: f.place_name || f.text || '',
+          lat: f.center ? f.center[1] : f.geometry?.coordinates?.[1],
+          lon: f.center ? f.center[0] : f.geometry?.coordinates?.[0],
+          raw: f,
+        }));
       }
+
+      setSuggestions(normalized);
+      setShowSuggestions(normalized.length > 0);
     } catch (e) {
       setSuggestions([]);
       setShowSuggestions(false);
     }
   };
 
-  // When user selects a suggestion
-  const handleSuggestionPress = feature => {
-    const [longitude, latitude] = feature.center;
-    setUserLocation({latitude, longitude});
-    setZoom(15);
-    setSearch(feature.place_name);
+  // When user selects a suggestion (normalized item)
+  const handleSuggestionPress = item => {
+    // If we have explicit coordinates, use them. Otherwise fall back to geocoding by name.
+    if (item && item.lat != null && item.lon != null) {
+      setUserLocation({latitude: Number(item.lat), longitude: Number(item.lon)});
+      setZoom(15);
+      setSearch(item.place_name || (item.raw && item.raw.display_name) || '');
+    } else if (item && (item.place_name || (item.raw && item.raw.display_name))) {
+      const name = item.place_name || (item.raw && item.raw.display_name);
+      setSearch(name);
+      // Try geocoding the name as fallback
+      geocodeAddress(name);
+    }
     setSuggestions([]);
     setShowSuggestions(false);
   };
@@ -183,6 +244,26 @@ const HomePage = ({navigation}) => {
   const cameraCenter = userLocation
     ? [userLocation.longitude, userLocation.latitude]
     : [INITIAL_COORDINATE.longitude, INITIAL_COORDINATE.latitude];
+
+  // Camera ref to programmatically move camera when needed
+  const cameraRef = useRef(null);
+
+  // When userLocation changes, ensure camera moves to that location
+  useEffect(() => {
+    if (!userLocation || !cameraRef.current) return;
+    try {
+      // setCamera is supported by the MapboxGL Camera ref in @rnmapbox/maps
+      cameraRef.current.setCamera({
+        centerCoordinate: [userLocation.longitude, userLocation.latitude],
+        zoomLevel: zoom,
+        animationMode: 'flyTo',
+        animationDuration: 1000,
+      });
+    } catch (e) {
+      // fallback: rely on prop change (centerCoordinate) which is already wired
+      // console.warn if needed
+    }
+  }, [userLocation, zoom]);
 
   const handleBookSpot = async spotId => {
     const currentUser = getCurrentUser();
@@ -249,12 +330,15 @@ const HomePage = ({navigation}) => {
         {/* Suggestions dropdown */}
         {showSuggestions && suggestions.length > 0 && (
           <View style={styles.suggestionsDropdown}>
-            {suggestions.map(feature => (
+            {suggestions.map(item => (
               <TouchableOpacity
-                key={feature.id}
+                key={item.id}
                 style={styles.suggestionItem}
-                onPress={() => handleSuggestionPress(feature)}>
-                <Text>{feature.place_name}</Text>
+                onPress={() => handleSuggestionPress(item)}>
+                <Text numberOfLines={2}>{item.place_name || (item.raw && item.raw.display_name) || 'Unknown'}</Text>
+                {item.raw && item.raw.address && item.raw.address.country && (
+                  <Text style={{fontSize: 12, color: '#666'}}>{item.raw.address.country}</Text>
+                )}
               </TouchableOpacity>
             ))}
           </View>
@@ -314,11 +398,14 @@ const HomePage = ({navigation}) => {
       </View>
       <MapboxGL.MapView style={{flex: 1}}>
         <MapboxGL.Camera
+          ref={cameraRef}
           zoomLevel={zoom}
           centerCoordinate={cameraCenter}
           animationMode="flyTo"
           animationDuration={1000}
         />
+        {/* show native user location indicator */}
+        <MapboxGL.UserLocation visible={true} />
         {/* Show user location */}
         {userLocation && (
           <MapboxGL.PointAnnotation

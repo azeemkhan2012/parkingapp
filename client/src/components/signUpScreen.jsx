@@ -161,6 +161,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="First Name"
+        placeholderTextColor="#999"
         value={form.firstName}
         onChangeText={text => handleNameChange('firstName', text)}
         autoCapitalize="words"
@@ -174,6 +175,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Last Name"
+        placeholderTextColor="#999"
         value={form.lastName}
         onChangeText={text => handleNameChange('lastName', text)}
         autoCapitalize="words"
@@ -186,6 +188,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Username"
+        placeholderTextColor="#999"
         autoCapitalize="none"
         value={form.username}
         onChangeText={text => handleChange('username', text)}
@@ -199,6 +202,7 @@ const SignUpScreen = ({navigation}) => {
         style={styles.input}
         placeholder="Email"
         keyboardType="email-address"
+        placeholderTextColor="#999"
         autoCapitalize="none"
         value={form.email}
         onChangeText={text => handleChange('email', text)}
@@ -208,6 +212,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Address"
+        placeholderTextColor="#999"
         value={form.address}
         onChangeText={text => handleChange('address', text)}
       />
@@ -218,6 +223,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Mobile No"
+        placeholderTextColor="#999"
         keyboardType="phone-pad"
         value={form.mobileNo}
         onChangeText={text => handleChange('mobileNo', text)}
@@ -230,6 +236,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Password"
+        placeholderTextColor="#999"
         secureTextEntry
         value={form.password}
         onChangeText={text => handleChange('password', text)}
@@ -241,6 +248,7 @@ const SignUpScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Confirm Password"
+        placeholderTextColor="#999"
         secureTextEntry
         value={form.confirmPassword}
         onChangeText={text => handleChange('confirmPassword', text)}

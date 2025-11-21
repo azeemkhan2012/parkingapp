@@ -257,6 +257,7 @@ const UserProfileEdit = ({navigation}) => {
       <TextInput
         style={[styles.input, errors.firstName ? styles.inputError : null]}
         placeholder="First Name"
+        placeholderTextColor="#999"
         value={form.firstName}
         onChangeText={text => handleNameChange('firstName', text)}
         onBlur={() => validateField('firstName', form.firstName)}
@@ -269,6 +270,7 @@ const UserProfileEdit = ({navigation}) => {
       <TextInput
         style={[styles.input, errors.lastName ? styles.inputError : null]}
         placeholder="Last Name"
+        placeholderTextColor="#999"
         value={form.lastName}
         onChangeText={text => handleNameChange('lastName', text)}
         onBlur={() => validateField('lastName', form.lastName)}
@@ -281,6 +283,7 @@ const UserProfileEdit = ({navigation}) => {
       <TextInput
         style={[styles.input, errors.username ? styles.inputError : null]}
         placeholder="Username"
+        placeholderTextColor="#999"
         value={form.username}
         onChangeText={text => handleChange('username', text)}
         onBlur={() => validateField('username', form.username)}
@@ -292,6 +295,7 @@ const UserProfileEdit = ({navigation}) => {
       <TextInput
         style={[styles.input, errors.email ? styles.inputError : null]}
         placeholder="Email Address"
+        placeholderTextColor="#999"
         keyboardType="email-address"
         autoCapitalize="none"
         value={form.email}
@@ -307,6 +311,7 @@ const UserProfileEdit = ({navigation}) => {
           emailChanged || errors.currentPassword ? styles.inputError : null,
         ]}
         placeholder="Current Password (only if changing email)"
+        placeholderTextColor="#999"
         secureTextEntry
         value={currentPassword}
         onChangeText={setCurrentPassword}
@@ -322,6 +327,7 @@ const UserProfileEdit = ({navigation}) => {
       <TextInput
         style={[styles.input, errors.address ? styles.inputError : null]}
         placeholder="Full Address"
+        placeholderTextColor="#999"
         value={form.address}
         onChangeText={text => handleChange('address', text)}
         onBlur={() => validateField('address', form.address)}
@@ -334,6 +340,7 @@ const UserProfileEdit = ({navigation}) => {
       <TextInput
         style={[styles.input, errors.mobileNo ? styles.inputError : null]}
         placeholder="Mobile Number"
+        placeholderTextColor="#999"
         value={form.mobileNo}
         onChangeText={text => handleChange('mobileNo', text)}
         onBlur={() => validateField('mobileNo', form.mobileNo)}

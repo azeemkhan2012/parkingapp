@@ -72,9 +72,7 @@ const HomePage = ({navigation}) => {
           });
           // zoom closer to user's location on app open
           setZoom(15);
-          // try to get a readable address to show in the search bar
-          console.log(lat,lon,"kjdhfhsdgfugsdufgysdgyyg");
-          
+
           reverseGeocode(lat, lon).catch(() => {});
           setLoading(false);
         },
@@ -117,21 +115,97 @@ const HomePage = ({navigation}) => {
     }
   }, [useSFpark, userLocation]);
 
-  const filteredSpots = spots.filter(spot => {
-    const matchesSearch =
-      !search.trim() ||
-      (spot.location &&
-        spot.location.toLowerCase().includes(search.toLowerCase()));
-    const matchesPrice =
-      (!minPrice || spot.price >= parseFloat(minPrice)) &&
-      (!maxPrice || spot.price <= parseFloat(maxPrice));
-    const matchesAvailability =
-      availability === 'all' ||
-      (availability === 'available' && spot.is_available) ||
-      (availability === 'unavailable' && !spot.is_available);
-    const matchesType = parkingType === 'all' || spot.type === parkingType;
-    return matchesSearch && matchesPrice && matchesAvailability && matchesType;
-  });
+  // const filteredSpots = spots.filter(spot => {
+  //   const matchesSearch =
+  //     !search.trim() ||
+  //     (spot.location &&
+  //       spot.location.toLowerCase().includes(search.toLowerCase()));
+  //   const matchesPrice =
+  //     (!minPrice || spot.price >= parseFloat(minPrice)) &&
+  //     (!maxPrice || spot.price <= parseFloat(maxPrice));
+  //   const matchesAvailability =
+  //     availability === 'all' ||
+  //     (availability === 'available' && spot.is_available) ||
+  //     (availability === 'unavailable' && !spot.is_available);
+  //   const matchesType = parkingType === 'all' || spot.type === parkingType;
+  //   return matchesSearch && matchesPrice && matchesAvailability && matchesType;
+  // });
+
+  const filteredSpots = [
+    {
+      spot_id: 'khi_128',
+      id: 'khi_128',
+
+      name: 'Midway Commercial Parking',
+      type: 'lot',
+
+      // Location
+      latitude: 25.0312,
+      longitude: 67.2823,
+      address: 'Midway Commercial, Bahria Town, Karachi',
+      city: 'Karachi',
+      area: 'Bahria Town',
+
+      // Pricing
+      pricing_currency: 'PKR',
+      pricing_hourly: 40,
+      pricing_daily: 200,
+      pricing_freeFor: null,
+
+      // Availability
+      availability_available: 58,
+      availability_total: 150,
+
+      // Hours
+      hours_open: '08:00',
+      hours_close: '23:00',
+      hours_is24Hours: false,
+
+      // Amenities
+      amenities: ['security'],
+
+      // Restrictions
+      restrictions: [],
+
+      // Rating
+      rating: 3.8,
+      reviewCount: 103,
+
+      isActive: true,
+
+      created_at: '2025-11-18T19:22:35Z',
+      updated_at: '2025-11-18T19:22:35Z',
+
+      // Full structured object (optional)
+      original_data: {
+        location: {
+          name: 'Midway Commercial Parking',
+          address: 'Midway Commercial, Bahria Town, Karachi',
+          latitude: 25.0312,
+          longitude: 67.2823,
+        },
+        availability: {
+          available: 58,
+          total: 150,
+        },
+        pricing: {
+          currency: 'PKR',
+          hourly: 40,
+          daily: 200,
+          freeFor: null,
+        },
+        hours: {
+          open: '08:00',
+          close: '23:00',
+          is24Hours: false,
+        },
+        amenities: ['security'],
+        restrictions: [],
+        rating: 3.8,
+        reviewCount: 103,
+      },
+    },
+  ];
 
   // Geocode address to coordinates (using Mapbox API)
   const geocodeAddress = async address => {
@@ -174,7 +248,8 @@ const HomePage = ({navigation}) => {
       const data = await resp.json();
       if (data) {
         // LocationIQ returns display_name field
-        const name = data.display_name || (data.address && data.address.city) || '';
+        const name =
+          data.display_name || (data.address && data.address.city) || '';
         if (name) setSearch(name);
       }
     } catch (e) {
@@ -190,7 +265,7 @@ const HomePage = ({navigation}) => {
     }
     try {
       const resp = await fetch(
-         `https://api.locationiq.com/v1/autocomplete?key=pk.8d19b1ef7170725976c6f53e5c97774c&q=${text}&limit=5&dedupe=1`,
+        `https://api.locationiq.com/v1/autocomplete?key=pk.8d19b1ef7170725976c6f53e5c97774c&q=${text}&limit=5&dedupe=1`,
       );
       const data = await resp.json();
       // Normalize data from different providers:
@@ -200,7 +275,11 @@ const HomePage = ({navigation}) => {
       if (Array.isArray(data)) {
         normalized = data.map(item => ({
           id: item.place_id || item.osm_id || `${item.lat}-${item.lon}`,
-          place_name: item.display_name || item.place_name || (item.address && item.address.name) || '',
+          place_name:
+            item.display_name ||
+            item.place_name ||
+            (item.address && item.address.name) ||
+            '',
           lat: item.lat ? parseFloat(item.lat) : undefined,
           lon: item.lon ? parseFloat(item.lon) : undefined,
           raw: item,
@@ -227,10 +306,16 @@ const HomePage = ({navigation}) => {
   const handleSuggestionPress = item => {
     // If we have explicit coordinates, use them. Otherwise fall back to geocoding by name.
     if (item && item.lat != null && item.lon != null) {
-      setUserLocation({latitude: Number(item.lat), longitude: Number(item.lon)});
+      setUserLocation({
+        latitude: Number(item.lat),
+        longitude: Number(item.lon),
+      });
       setZoom(15);
       setSearch(item.place_name || (item.raw && item.raw.display_name) || '');
-    } else if (item && (item.place_name || (item.raw && item.raw.display_name))) {
+    } else if (
+      item &&
+      (item.place_name || (item.raw && item.raw.display_name))
+    ) {
       const name = item.place_name || (item.raw && item.raw.display_name);
       setSearch(name);
       // Try geocoding the name as fallback
@@ -247,6 +332,45 @@ const HomePage = ({navigation}) => {
 
   // Camera ref to programmatically move camera when needed
   const cameraRef = useRef(null);
+
+  // Route and distance state
+  const [routeGeoJSON, setRouteGeoJSON] = useState(null);
+  const [routeDistanceKm, setRouteDistanceKm] = useState(null);
+
+  // Helper: extract numeric coords from a spot object
+  const getCoordsFromSpot = spot => {
+    if (!spot) return {lat: null, lon: null};
+    const lon = Number(
+      spot.longitude ??
+        spot.original_data?.location?.longitude ??
+        spot.location?.longitude ??
+        spot.lon ??
+        0,
+    );
+    const lat = Number(
+      spot.latitude ??
+        spot.original_data?.location?.latitude ??
+        spot.location?.latitude ??
+        spot.lat ??
+        0,
+    );
+    return {lat: isFinite(lat) ? lat : null, lon: isFinite(lon) ? lon : null};
+  };
+
+  // Helper: haversine distance in kilometers
+  const haversineDistanceKm = (lat1, lon1, lat2, lon2) => {
+    if ([lat1, lon1, lat2, lon2].some(v => v == null)) return null;
+    const toRad = deg => (deg * Math.PI) / 180;
+    const R = 6371; // Earth's radius in km
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round((R * c) * 100) / 100; // two decimals
+  };
 
   // When userLocation changes, ensure camera moves to that location
   useEffect(() => {
@@ -316,6 +440,7 @@ const HomePage = ({navigation}) => {
         <TextInput
           style={styles.searchBar}
           placeholder="Search by address or location..."
+          placeholderTextColor="#999"
           value={search}
           onChangeText={text => {
             setSearch(text);
@@ -335,9 +460,15 @@ const HomePage = ({navigation}) => {
                 key={item.id}
                 style={styles.suggestionItem}
                 onPress={() => handleSuggestionPress(item)}>
-                <Text numberOfLines={2}>{item.place_name || (item.raw && item.raw.display_name) || 'Unknown'}</Text>
+                <Text numberOfLines={2}>
+                  {item.place_name ||
+                    (item.raw && item.raw.display_name) ||
+                    'Unknown'}
+                </Text>
                 {item.raw && item.raw.address && item.raw.address.country && (
-                  <Text style={{fontSize: 12, color: '#666'}}>{item.raw.address.country}</Text>
+                  <Text style={{fontSize: 12, color: '#666'}}>
+                    {item.raw.address.country}
+                  </Text>
                 )}
               </TouchableOpacity>
             ))}
@@ -349,6 +480,7 @@ const HomePage = ({navigation}) => {
           <TextInput
             style={styles.filterInput}
             placeholder="Min Price"
+            placeholderTextColor="#999"
             value={minPrice}
             onChangeText={setMinPrice}
             keyboardType="numeric"
@@ -356,6 +488,7 @@ const HomePage = ({navigation}) => {
           <TextInput
             style={styles.filterInput}
             placeholder="Max Price"
+            placeholderTextColor="#999"
             value={maxPrice}
             onChangeText={setMaxPrice}
             keyboardType="numeric"
@@ -424,45 +557,59 @@ const HomePage = ({navigation}) => {
           </MapboxGL.PointAnnotation>
         )}
         {/* Show parking spots */}
-        {filteredSpots.map(spot => (
-          <MapboxGL.PointAnnotation
-            key={spot.id}
-            id={spot.id}
-            coordinate={[spot?.longitude, spot?.latitude]}
-            onSelected={() => setSelectedSpot(spot)}>
-            <View
-              style={[
-                styles.marker,
-                {backgroundColor: spot.is_available ? '#4CAF50' : '#B0BEC5'},
-              ]}>
-              <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 10}}>
-                ${spot.price}
-              </Text>
-            </View>
+        {filteredSpots.map(spot => {
+          console.log(spot, 'spot-debug');
 
-            <MapboxGL.Callout key={`callout-${spot.id}`}>
-              {selectedSpot?.id === spot.id ? (
-                <View style={styles.callout}>
-                  <Text style={styles.calloutTitle}>{spot?.location}</Text>
-                  <Text>Address: {spot?.address || 'N/A'}</Text>
-                  <Text>Type: {spot?.type}</Text>
-                  <Text>Price: ${spot?.price}</Text>
-                  <Text>Available: {spot?.is_available ? 'Yes' : 'No'}</Text>
-                  <Text>Hours: {spot?.hours || '24/7'}</Text>
-                  <Text>Restrictions: {spot?.restrictions || 'None'}</Text>
-                  <TouchableOpacity
-                    style={styles.bookButton}
-                    onPress={() => handleBookSpot(spot?.id)}>
-                    <Text style={styles.bookButtonText}>Book Spot</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                // Empty view to keep Callout valid for Mapbox
-                <View style={{height: 1, width: 1}} />
-              )}
-            </MapboxGL.Callout>
-          </MapboxGL.PointAnnotation>
-        ))}
+          const lon = Number(spot.longitude ?? spot.original_data?.location?.longitude ?? spot.location?.longitude ?? spot.lon ?? 0);
+          const lat = Number(spot.latitude ?? spot.original_data?.location?.latitude ?? spot.location?.latitude ?? spot.lat ?? 0);
+
+          return (
+            <MapboxGL.PointAnnotation
+              key={String(spot.id)}
+              id={String(spot.id)}
+              coordinate={[lon, lat]}
+              onSelected={() => setSelectedSpot(spot)}>
+              <View
+                style={[
+                  styles.marker,
+                  {
+                    backgroundColor: spot.availability_available
+                      ? '#4CAF50'
+                      : '#B0BEC5',
+                  },
+                ]}>
+                <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 10}}>
+                  ${spot?.pricing?.daily || 'N/A'}
+                  gshfgsjhg
+                </Text>
+              </View>
+
+              <MapboxGL.Callout key={`callout-${spot.id}`}>
+                {selectedSpot?.id === spot.id ? (
+                  <View style={styles.callout}>
+                    <Text style={styles.calloutTitle}>
+                      {spot?.location.address}
+                    </Text>
+                    <Text>Address: {spot?.address || 'N/A'}</Text>
+                    <Text>Type: {spot?.type}</Text>
+                    <Text>Price: ${spot?.pricing?.daily}</Text>
+                    <Text>Available: {spot?.is_available ? 'Yes' : 'No'}</Text>
+                    <Text>Hours: {spot?.hours.open || '24/7'}</Text>
+                    <Text>Restrictions: {spot?.restrictions || 'None'}</Text>
+                    <TouchableOpacity
+                      style={styles.bookButton}
+                      onPress={() => handleBookSpot(spot?.id)}>
+                      <Text style={styles.bookButtonText}>Book Spot</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  // Empty view to keep Callout valid for Mapbox
+                  <View style={{height: 1, width: 1}} />
+                )}
+              </MapboxGL.Callout>
+            </MapboxGL.PointAnnotation>
+          );
+        })}
       </MapboxGL.MapView>
       {filteredSpots.length === 0 && (
         <View style={styles.noResults}>

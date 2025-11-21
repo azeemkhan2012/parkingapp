@@ -38,6 +38,7 @@ const ForgotPasswordScreen = ({navigation}) => {
       <TextInput
         style={styles.input}
         placeholder="Email"
+        placeholderTextColor="#999"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
@@ -46,6 +47,7 @@ const ForgotPasswordScreen = ({navigation}) => {
       {/* <TextInput
         style={styles.input}
         placeholder="New Password"
+        placeholderTextColor="#999"
         secureTextEntry
         value={newPassword}
         onChangeText={setNewPassword}

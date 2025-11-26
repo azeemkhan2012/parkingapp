@@ -7,26 +7,44 @@ import {
   Text,
   TouchableOpacity,
   Alert,
-  PermissionsAndroid,
-  Platform,
+  FlatList,
   ActivityIndicator,
 } from 'react-native';
-import MapboxGL from '@rnmapbox/maps';
+import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
-import {
-  getParkingSpots,
-  bookParkingSpot,
-  getCurrentUser,
-  signOut,
-} from '../config/firebase';
-import {Picker} from '@react-native-picker/picker';
-import {onSnapshot, collection} from 'firebase/firestore';
-import {db} from '../config/firebase';
-import {fetchSFparkSpots} from '../utils/sfpark';
+import {signOut} from '../config/firebase';
+import Icon from 'react-native-vector-icons/FontAwesome5';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import ColorfulCard from '@freakycoder/react-native-colorful-card';
+import {useRoute} from '@react-navigation/native';
 
+Logger.setLogCallback(log => {
+  const {message} = log;
+
+  if (
+    message.match('Request failed due to a permanent error: Canceled') ||
+    message.match('Request failed due to a permanent error: Socket Closed')
+  ) {
+    return true;
+  }
+  return false;
+});
 MapboxGL.setAccessToken(
   'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg',
 );
+// MapboxGL.setConnected(true);
+MapboxGL.setTelemetryEnabled(false);
+MapboxGL.setWellKnownTileServer('Mapbox');
+Geolocation.setRNConfiguration({
+  skipPermissionRequests: false,
+  authorizationLevel: 'auto',
+});
+
+const routeProfiles = [
+  {id: 'walking', label: 'Walking', icon: 'walking'},
+  {id: 'cycling', label: 'Cylcing', icon: 'bicycle'},
+  {id: 'driving', label: 'Driving', icon: 'car'},
+];
 
 const INITIAL_COORDINATE = {
   latitude: 37.78825,
@@ -34,102 +52,62 @@ const INITIAL_COORDINATE = {
   zoomLevel: 12,
 };
 
+const APIKEY =
+  'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg';
+
 const HomePage = ({navigation}) => {
   const [search, setSearch] = useState('');
-  const [spots, setSpots] = useState([]);
-  const [selectedSpot, setSelectedSpot] = useState(null);
+  const [destinationCoords, setDestinationCoords] = useState([24.8021, 67.03]);
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
   const [userLocation, setUserLocation] = useState(null);
+  const [selectedRouteProfile, setselectedRouteProfile] = useState('driving');
+  const [routeDirections, setRouteDirections] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [distance, setDistance] = useState(null);
+  const [duration, setDuration] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [availability, setAvailability] = useState('all');
   const [parkingType, setParkingType] = useState('all');
-  const [useSFpark, setUseSFpark] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [currentStep, setCurrentStep] = useState(null);
+
+  const route = useRoute();
 
   // Get device location
-  useEffect(() => {
-    const requestLocation = async () => {
-      if (Platform.OS === 'android') {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Permission Denied', 'Location permission is required.');
-          setLoading(false);
-          return;
-        }
-      }
+  async function getPermissionLocation() {
+    try {
       Geolocation.getCurrentPosition(
-        position => {
-          const lat = position.coords.latitude;
-          const lon = position.coords.longitude;
+        location => {
           setUserLocation({
-            latitude: lat,
-            longitude: lon,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
           });
-          // zoom closer to user's location on app open
           setZoom(15);
-
-          reverseGeocode(lat, lon).catch(() => {});
           setLoading(false);
         },
-        error => {
-          Alert.alert('Error', 'Could not get location');
+        err => {
+          console.log('location error', err);
+          Alert.alert('Error', err.message || 'Could not get location');
           setLoading(false);
         },
-        {enableHighAccuracy: true, timeout: 15000, maximumAge: 10000},
+        {enableHighAccuracy: true},
       );
-    };
-    requestLocation();
-  }, []);
-
-  // Fetch parking spots
-  // useEffect(() => {
-  //   const fetchSpots = async () => {
-  //     const spotsData = await getParkingSpots();
-  //     setSpots(spotsData);
-  //   };
-  //   fetchSpots();
-  // }, []);
-  useEffect(() => {
-    if (useSFpark && userLocation) {
-      fetchSFparkSpots(userLocation.latitude, userLocation.longitude).then(
-        setSpots,
-      );
-    } else {
-      // Listen for Firestore updates
-      const unsubscribe = onSnapshot(
-        collection(db, 'parking_spots'),
-        snapshot => {
-          const spotsData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
-          setSpots(spotsData);
-        },
-      );
-      return () => unsubscribe();
+    } catch (error) {
+      console.error('Error getting location', error);
+      setLoading(false);
     }
-  }, [useSFpark, userLocation]);
+  }
 
-  // const filteredSpots = spots.filter(spot => {
-  //   const matchesSearch =
-  //     !search.trim() ||
-  //     (spot.location &&
-  //       spot.location.toLowerCase().includes(search.toLowerCase()));
-  //   const matchesPrice =
-  //     (!minPrice || spot.price >= parseFloat(minPrice)) &&
-  //     (!maxPrice || spot.price <= parseFloat(maxPrice));
-  //   const matchesAvailability =
-  //     availability === 'all' ||
-  //     (availability === 'available' && spot.is_available) ||
-  //     (availability === 'unavailable' && !spot.is_available);
-  //   const matchesType = parkingType === 'all' || spot.type === parkingType;
-  //   return matchesSearch && matchesPrice && matchesAvailability && matchesType;
-  // });
+  useEffect(() => {
+    getPermissionLocation();
+    //console.log(store.longitude);
+    if (selectedRouteProfile !== null) {
+      createRouterLine(userLocation, selectedRouteProfile);
+    }
+  }, [selectedRouteProfile]);
 
   const filteredSpots = [
     {
@@ -237,25 +215,68 @@ const HomePage = ({navigation}) => {
     }
   };
 
-  // Reverse geocode coordinates to a human-friendly place name (LocationIQ)
-  const reverseGeocode = async (latitude, longitude) => {
-    try {
-      const resp = await fetch(
-        `https://api.locationiq.com/v1/reverse.php?key=pk.8d19b1ef7170725976c6f53e5c97774c&lat=${encodeURIComponent(
-          latitude,
-        )}&lon=${encodeURIComponent(longitude)}&format=json`,
-      );
-      const data = await resp.json();
-      if (data) {
-        // LocationIQ returns display_name field
-        const name =
-          data.display_name || (data.address && data.address.city) || '';
-        if (name) setSearch(name);
-      }
-    } catch (e) {
-      console.warn('Reverse geocode failed', e);
+  function startNavigation() {
+    if (!routeDirections) {
+      Alert.alert('No route', 'Please select a route first.');
+      return;
     }
-  };
+    setIsNavigating(!isNavigating);
+  }
+
+  function makeRouterFeature(coordinates) {
+    let routerFeature = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: coordinates,
+          },
+        },
+      ],
+    };
+    return routerFeature;
+  }
+
+  async function createRouterLine(coords, routeProfile) {
+    console.log(coords, 'coords');
+
+    const startCoords = `${coords.longitude},${coords.latitude}`;
+
+    const endCoords = `${['67.03005', '24.80234']}`;
+    const geometries = 'geojson';
+    const url = `https://api.mapbox.com/directions/v5/mapbox/${routeProfile}/${startCoords};${endCoords}?alternatives=true&geometries=${geometries}&steps=true&banner_instructions=true&overview=full&voice_instructions=true&access_token=${APIKEY}`;
+
+    try {
+      let response = await fetch(url);
+      let json = await response.json();
+      console.log(json, 'agdfjahg');
+
+      const data = json?.routes.map(data => {
+        setDistance((data.distance / 1000).toFixed(2));
+        setDuration((data.duration / 3600).toFixed(2));
+      });
+
+      let coordinates = json['routes'][0]['geometry']['coordinates'];
+      let destinationCoordinates =
+        json['routes'][0]['geometry']['coordinates'].slice(-1)[0];
+      let steps = json.routes[0].legs[0].steps;
+      setCurrentStep(steps);
+      setDestinationCoords(destinationCoordinates);
+      if (coordinates.length) {
+        const routerFeature = makeRouterFeature([...coordinates]);
+        console.log(routerFeature, 'routerFeature');
+
+        setRouteDirections(routerFeature);
+      }
+      setLoading(false);
+    } catch (e) {
+      setLoading(false);
+      console.log(e);
+    }
+  }
 
   const fetchSuggestions = async text => {
     if (!text.trim()) {
@@ -333,45 +354,6 @@ const HomePage = ({navigation}) => {
   // Camera ref to programmatically move camera when needed
   const cameraRef = useRef(null);
 
-  // Route and distance state
-  const [routeGeoJSON, setRouteGeoJSON] = useState(null);
-  const [routeDistanceKm, setRouteDistanceKm] = useState(null);
-
-  // Helper: extract numeric coords from a spot object
-  const getCoordsFromSpot = spot => {
-    if (!spot) return {lat: null, lon: null};
-    const lon = Number(
-      spot.longitude ??
-        spot.original_data?.location?.longitude ??
-        spot.location?.longitude ??
-        spot.lon ??
-        0,
-    );
-    const lat = Number(
-      spot.latitude ??
-        spot.original_data?.location?.latitude ??
-        spot.location?.latitude ??
-        spot.lat ??
-        0,
-    );
-    return {lat: isFinite(lat) ? lat : null, lon: isFinite(lon) ? lon : null};
-  };
-
-  // Helper: haversine distance in kilometers
-  const haversineDistanceKm = (lat1, lon1, lat2, lon2) => {
-    if ([lat1, lon1, lat2, lon2].some(v => v == null)) return null;
-    const toRad = deg => (deg * Math.PI) / 180;
-    const R = 6371; // Earth's radius in km
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round((R * c) * 100) / 100; // two decimals
-  };
-
   // When userLocation changes, ensure camera moves to that location
   useEffect(() => {
     if (!userLocation || !cameraRef.current) return;
@@ -388,22 +370,6 @@ const HomePage = ({navigation}) => {
       // console.warn if needed
     }
   }, [userLocation, zoom]);
-
-  const handleBookSpot = async spotId => {
-    const currentUser = getCurrentUser();
-    if (!currentUser) {
-      Alert.alert('Error', 'Please login to book a spot');
-      return;
-    }
-    const result = await bookParkingSpot(spotId, currentUser.uid);
-    if (result.success) {
-      Alert.alert('Success', 'Spot booked successfully!');
-      const spotsData = await getParkingSpots();
-      setSpots(spotsData);
-    } else {
-      Alert.alert('Error', result.error || 'Booking failed');
-    }
-  };
 
   if (loading) {
     return (
@@ -424,6 +390,78 @@ const HomePage = ({navigation}) => {
     }
   };
 
+  function handleNavigationUpdate(location) {
+    if (!currentStep) return;
+
+    const userLng = location.coords.longitude;
+    const userLat = location.coords.latitude;
+
+    // Move camera to follow user
+    cameraRef.current?.setCamera({
+      centerCoordinate: [userLng, userLat],
+      zoomLevel: 16,
+      animationMode: 'flyTo',
+      animationDuration: 1000,
+    });
+
+    // Check if user reached next step
+    const nextStep = currentStep[0];
+    const [endLng, endLat] = nextStep.maneuver.location;
+
+    const distance = getDistance(userLat, userLng, endLat, endLng);
+
+    if (distance < 20) {
+      // Step complete → move to next
+      currentStep.shift();
+
+      if (currentStep.length === 0) {
+        Alert.alert('Arrived!', 'You reached your destination.');
+        setIsNavigating(false);
+      } else {
+        setCurrentStep([...currentStep]);
+      }
+    }
+  }
+
+  function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3;
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // meters
+  }
+
+  const renderItem = ({item}) => (
+    <TouchableOpacity
+      style={[
+        styles.routeProfileButton,
+        item.id == selectedRouteProfile && styles.selectedRouteProfileButton,
+      ]}
+      onPress={() => setselectedRouteProfile(item.id)}>
+      <Icon
+        name={item.icon}
+        size={24}
+        color={
+          item.id == selectedRouteProfile ? 'white' : 'rgba(255,255,255,0.6)'
+        }
+      />
+      <Text
+        style={[
+          styles.routeProfileButtonText,
+          item.id == selectedRouteProfile &&
+            styles.selectedRouteProfileButtonText,
+        ]}>
+        {item.label}
+      </Text>
+    </TouchableOpacity>
+  );
   return (
     <View style={styles.container}>
       <View style={styles.actionsRow}>
@@ -452,69 +490,29 @@ const HomePage = ({navigation}) => {
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           returnKeyType="search"
         />
-        {/* Suggestions dropdown */}
-        {showSuggestions && suggestions.length > 0 && (
-          <View style={styles.suggestionsDropdown}>
-            {suggestions.map(item => (
-              <TouchableOpacity
-                key={item.id}
-                style={styles.suggestionItem}
-                onPress={() => handleSuggestionPress(item)}>
-                <Text numberOfLines={2}>
-                  {item.place_name ||
-                    (item.raw && item.raw.display_name) ||
-                    'Unknown'}
-                </Text>
-                {item.raw && item.raw.address && item.raw.address.country && (
-                  <Text style={{fontSize: 12, color: '#666'}}>
-                    {item.raw.address.country}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* Filter Controls */}
-        <View style={styles.filterRow}>
-          <TextInput
-            style={styles.filterInput}
-            placeholder="Min Price"
-            placeholderTextColor="#999"
-            value={minPrice}
-            onChangeText={setMinPrice}
-            keyboardType="numeric"
-          />
-          <TextInput
-            style={styles.filterInput}
-            placeholder="Max Price"
-            placeholderTextColor="#999"
-            value={maxPrice}
-            onChangeText={setMaxPrice}
-            keyboardType="numeric"
-          />
-          <View style={styles.pickerWrapper}>
-            <Picker
-              selectedValue={availability}
-              style={styles.filterPicker}
-              onValueChange={setAvailability}>
-              <Picker.Item label="All" value="all" />
-              <Picker.Item label="Available" value="available" />
-              <Picker.Item label="Unavailable" value="unavailable" />
-            </Picker>
-          </View>
-          <View style={styles.pickerWrapper}>
-            <Picker
-              selectedValue={parkingType}
-              style={styles.filterPicker}
-              onValueChange={setParkingType}>
-              <Picker.Item label="All Types" value="all" />
-              <Picker.Item label="Street" value="street" />
-              <Picker.Item label="Garage" value="garage" />
-            </Picker>
-          </View>
-        </View>
       </View>
+
+      {showSuggestions && suggestions.length > 0 && (
+        <View style={styles.suggestionsDropdown}>
+          {suggestions.map(item => (
+            <TouchableOpacity
+              key={item.id}
+              style={styles.suggestionItem}
+              onPress={() => handleSuggestionPress(item)}>
+              <Text numberOfLines={2}>
+                {item.place_name ||
+                  (item.raw && item.raw.display_name) ||
+                  'Unknown'}
+              </Text>
+              {item.raw && item.raw.address && item.raw.address.country && (
+                <Text style={{fontSize: 12, color: '#666'}}>
+                  {item.raw.address.country}
+                </Text>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* Zoom Controls */}
       <View style={styles.zoomControls}>
@@ -529,93 +527,132 @@ const HomePage = ({navigation}) => {
           -
         </Text>
       </View>
-      <MapboxGL.MapView style={{flex: 1}}>
+      {isNavigating && currentStep && (
+        <View style={styles.navInstructionWrap} pointerEvents="box-none">
+          <View style={styles.navInstructionInner}>
+            <View style={styles.navIconContainer}>
+              <Ionicons name="navigate" size={22} color="#fff" />
+            </View>
+            <View style={styles.navTextContainer}>
+              <Text numberOfLines={2} style={styles.navInstructionText}>
+                {currentStep[0]?.maneuver?.instruction}
+              </Text>
+              <View style={styles.navMetaRow}>
+                <Text style={styles.navMetaText}>
+                  {currentStep[0]?.distance != null
+                    ? `${Math.round(currentStep[0].distance)} m`
+                    : ''}
+                </Text>
+                {currentStep[0]?.duration != null && (
+                  <Text style={[styles.navMetaText, {marginLeft: 12}]}>
+                    ~{Math.round(currentStep[0].duration / 60)} min
+                  </Text>
+                )}
+              </View>
+            </View>
+            <TouchableOpacity
+              style={styles.navCloseBtn}
+              onPress={() => setIsNavigating(false)}>
+              <Ionicons name="close" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <MapboxGL.MapView
+        style={{flex: 1}}
+        rotateEnabled={true}
+        styleURL="mapbox://styles/mapbox/navigation-night-v1"
+        zoomEnabled={true}
+        onDidFinishLoadingMap={async () => {
+          await createRouterLine(userLocation, selectedRouteProfile);
+        }}>
         <MapboxGL.Camera
-          ref={cameraRef}
+          // ref={cameraRef}
           zoomLevel={zoom}
           centerCoordinate={cameraCenter}
           animationMode="flyTo"
-          animationDuration={1000}
+          animationDuration={6000}
         />
-        {/* show native user location indicator */}
-        <MapboxGL.UserLocation visible={true} />
-        {/* Show user location */}
-        {userLocation && (
-          <MapboxGL.PointAnnotation
-            id="user-location"
-            coordinate={[userLocation.longitude, userLocation.latitude]}>
-            <View
+
+        {routeDirections && (
+          <MapboxGL.ShapeSource id="line1" shape={routeDirections}>
+            <MapboxGL.LineLayer
+              id="routerLine01"
               style={{
-                width: 24,
-                height: 24,
-                borderRadius: 12,
-                backgroundColor: '#007AFF',
-                borderWidth: 2,
-                borderColor: '#fff',
+                lineColor: '#142ffa',
+                lineWidth: 8,
               }}
             />
+          </MapboxGL.ShapeSource>
+        )}
+
+        {destinationCoords && (
+          <MapboxGL.PointAnnotation
+            id="user-location"
+            coordinate={destinationCoords}>
+            <View style={styles.destinationIcon}>
+              {/* <Ionicons name="storefront" size={24} color="#e1310a" /> */}
+              <Icon name="parking" size={30} color="#900" />
+            </View>
           </MapboxGL.PointAnnotation>
         )}
+        <MapboxGL.UserLocation
+          animated={true}
+          androidRenderMode={'gps'}
+          showsUserHeadingIndicator={true}
+          onUpdate={loc => {
+            if (isNavigating) handleNavigationUpdate(loc);
+          }}
+        />
+
         {/* Show parking spots */}
-        {filteredSpots.map(spot => {
-          console.log(spot, 'spot-debug');
-
-          const lon = Number(spot.longitude ?? spot.original_data?.location?.longitude ?? spot.location?.longitude ?? spot.lon ?? 0);
-          const lat = Number(spot.latitude ?? spot.original_data?.location?.latitude ?? spot.location?.latitude ?? spot.lat ?? 0);
-
-          return (
-            <MapboxGL.PointAnnotation
-              key={String(spot.id)}
-              id={String(spot.id)}
-              coordinate={[lon, lat]}
-              onSelected={() => setSelectedSpot(spot)}>
-              <View
-                style={[
-                  styles.marker,
-                  {
-                    backgroundColor: spot.availability_available
-                      ? '#4CAF50'
-                      : '#B0BEC5',
-                  },
-                ]}>
-                <Text style={{color: '#fff', fontWeight: 'bold', fontSize: 10}}>
-                  ${spot?.pricing?.daily || 'N/A'}
-                  gshfgsjhg
-                </Text>
-              </View>
-
-              <MapboxGL.Callout key={`callout-${spot.id}`}>
-                {selectedSpot?.id === spot.id ? (
-                  <View style={styles.callout}>
-                    <Text style={styles.calloutTitle}>
-                      {spot?.location.address}
-                    </Text>
-                    <Text>Address: {spot?.address || 'N/A'}</Text>
-                    <Text>Type: {spot?.type}</Text>
-                    <Text>Price: ${spot?.pricing?.daily}</Text>
-                    <Text>Available: {spot?.is_available ? 'Yes' : 'No'}</Text>
-                    <Text>Hours: {spot?.hours.open || '24/7'}</Text>
-                    <Text>Restrictions: {spot?.restrictions || 'None'}</Text>
-                    <TouchableOpacity
-                      style={styles.bookButton}
-                      onPress={() => handleBookSpot(spot?.id)}>
-                      <Text style={styles.bookButtonText}>Book Spot</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  // Empty view to keep Callout valid for Mapbox
-                  <View style={{height: 1, width: 1}} />
-                )}
-              </MapboxGL.Callout>
-            </MapboxGL.PointAnnotation>
-          );
-        })}
       </MapboxGL.MapView>
       {filteredSpots.length === 0 && (
         <View style={styles.noResults}>
           <Text>No parking spots found.</Text>
         </View>
       )}
+      {routeDirections && (
+        <View style={styles.cardContainer}>
+          <ColorfulCard
+            title={`Dollmen Shopping Center`}
+            value={`${duration} h`}
+            footerTitle="Distance"
+            footerValue={`${distance} km`}
+            iconImageSource={require('../assets/info.png')}
+            style={{backgroundColor: '#33495F'}}
+            onPress={() => {}}
+          />
+        </View>
+      )}
+      <FlatList
+        data={routeProfiles}
+        renderItem={renderItem}
+        keyExtractor={item => item.id}
+        horizontal
+        contentContainerStyle={styles.routeProfileList}
+        showsHorizontalScrollIndicator={false}
+        style={styles.flatList}
+      />
+      <TouchableOpacity
+        style={[
+          styles.startNavButton,
+          isNavigating && styles.startNavButtonActive,
+        ]}
+        onPress={() => startNavigation()}>
+        <View style={styles.startNavButtonInner}>
+          <Ionicons
+            name={isNavigating ? 'play-skip-forward' : 'car'}
+            size={18}
+            color="#fff"
+            style={{marginRight: 10}}
+          />
+          <Text style={styles.startNavButtonText}>
+            {isNavigating ? 'Stop Navigation' : 'Start Navigation'}
+          </Text>
+        </View>
+      </TouchableOpacity>
     </View>
   );
 };
@@ -624,6 +661,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F4F6F6',
+  },
+  destinationIcon: {
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardContainer: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    zIndex: 999,
+  },
+  flatList: {
+    position: 'absolute',
+    bottom: 20,
+    left: Dimensions.get('window').width / 2 - 40,
+    right: 0,
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   searchBar: {
     backgroundColor: '#fff',
@@ -643,13 +700,13 @@ const styles = StyleSheet.create({
   },
   suggestionsDropdown: {
     position: 'absolute',
-    top: 68,
+    top: 128,
     left: 16,
     right: 16,
     backgroundColor: '#fff',
     borderRadius: 8,
-    zIndex: 10,
-    maxHeight: 180,
+    zIndex: 9999,
+    maxHeight: 'auto',
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 2},
@@ -840,6 +897,89 @@ const styles = StyleSheet.create({
   actionsText: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  startNavButton: {
+    position: 'absolute',
+    bottom: 26,
+    left: 20,
+    right: 20,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#E86B0A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 999,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 6},
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+  },
+  startNavButtonActive: {
+    backgroundColor: '#FF3B30',
+  },
+  startNavButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  startNavButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+
+  /* Navigation instruction banner */
+  navInstructionWrap: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    right: 16,
+    zIndex: 999,
+    alignItems: 'center',
+  },
+  navInstructionInner: {
+    backgroundColor: '#111827',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    elevation: 8,
+  },
+  navIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  navTextContainer: {
+    flex: 1,
+  },
+  navInstructionText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  navMetaRow: {
+    flexDirection: 'row',
+    marginTop: 6,
+  },
+  navMetaText: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 12,
+  },
+  navCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
 });
 

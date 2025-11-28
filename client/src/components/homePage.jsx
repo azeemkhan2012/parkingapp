@@ -12,10 +12,21 @@ import {
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
-import {signOut} from '../config/firebase';
 import Icon from 'react-native-vector-icons/FontAwesome5';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import ColorfulCard from '@freakycoder/react-native-colorful-card';
+import {useRoute} from '@react-navigation/native';
+import {
+  getParkingSpots,
+  bookParkingSpot,
+  getCurrentUser,
+  signOut,
+} from '../config/firebase';
+import {Picker} from '@react-native-picker/picker';
+import {onSnapshot, collection, getDocs} from 'firebase/firestore';
+import {db} from '../config/firebase';
+import {fetchSFparkSpots} from '../utils/sfpark';
+import NearbyParkingModal from './NearbyParkingModal';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -79,7 +90,11 @@ const HomePage = ({navigation}) => {
   const [parkingType, setParkingType] = useState('all');
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
-
+  const route = useRoute();
+  const [useSFpark, setUseSFpark] = useState(false);
+  const [showNearbyModal, setShowNearbyModal] = useState(false);
+  const [nearbySpots, setNearbySpots] = useState([]);
+  const [loadingNearby, setLoadingNearby] = useState(false);
   // Get device location
   async function getPermissionLocation() {
     try {
@@ -104,8 +119,6 @@ const HomePage = ({navigation}) => {
       setLoading(false);
     }
   }
-
-  // Request device location only once on mount
   useEffect(() => {
     getPermissionLocation();
   }, []);
@@ -116,6 +129,84 @@ const HomePage = ({navigation}) => {
       createRouterLine(userLocation, selectedRouteProfile);
     }
   }, [userLocation, selectedRouteProfile]);
+  }, [selectedRouteProfile]);
+  // Function to find nearby parking spots
+  const findNearbyParking = async () => {
+    if (!userLocation) {
+      Alert.alert('Location Required', 'Please enable location services to find nearby parking.');
+      return;
+    }
+
+    setLoadingNearby(true);
+    try {
+      // Fetch all parking spots from Firestore
+      const snapshot = await getDocs(collection(db, 'parking_spots'));
+      const allSpots = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      // Filter spots that have valid coordinates
+      const validSpots = allSpots.filter(spot => {
+        const lat = spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude;
+        const lon = spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude;
+        return lat && lon;
+      });
+
+      setNearbySpots(validSpots);
+      setShowNearbyModal(true);
+    } catch (error) {
+      console.error('Error fetching nearby parking:', error);
+      Alert.alert('Error', 'Failed to fetch parking spots. Please try again.');
+    } finally {
+      setLoadingNearby(false);
+    }
+  };
+
+  // Handle book now action
+  const handleBookNow = async (spot) => {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      Alert.alert('Login Required', 'Please login to book a parking spot.');
+      return;
+    }
+
+    try {
+      const result = await bookParkingSpot(spot.id, currentUser.uid);
+      if (result.success) {
+        Alert.alert('Success', 'Parking spot booked successfully!');
+        // Refresh nearby spots
+        findNearbyParking();
+      } else {
+        Alert.alert('Error', result.error || 'Booking failed');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to book parking spot.');
+    }
+  };
+
+  // Handle save for later action
+  const handleSaveForLater = (spot) => {
+    // TODO: Implement save for later functionality
+    Alert.alert('Saved', 'Parking spot saved for later!');
+    console.log('Saving spot for later:', spot);
+  };
+
+  // const filteredSpots = spots.filter(spot => {
+  //   const matchesSearch =
+  //     !search.trim() ||
+  //     (spot.location &&
+  //       spot.location.toLowerCase().includes(search.toLowerCase()));
+  //   const matchesPrice =
+  //     (!minPrice || spot.price >= parseFloat(minPrice)) &&
+  //     (!maxPrice || spot.price <= parseFloat(maxPrice));
+  //   const matchesAvailability =
+  //     availability === 'all' ||
+  //     (availability === 'available' && spot.is_available) ||
+  //     (availability === 'unavailable' && !spot.is_available);
+  //   const matchesType = parkingType === 'all' || spot.type === parkingType;
+  //   return matchesSearch && matchesPrice && matchesAvailability && matchesType;
+  // });
 
   const filteredSpots = [
     {
@@ -516,6 +607,82 @@ const HomePage = ({navigation}) => {
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           returnKeyType="search"
         />
+        
+        {/* Find Parking Near Me Button */}
+        <TouchableOpacity
+          style={styles.findNearbyButton}
+          onPress={findNearbyParking}
+          disabled={loadingNearby || !userLocation}>
+          {loadingNearby ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.findNearbyButtonText}>
+              🚗 Find Parking Near Me
+            </Text>
+          )}
+        </TouchableOpacity>
+        {/* Suggestions dropdown */}
+        {showSuggestions && suggestions.length > 0 && (
+          <View style={styles.suggestionsDropdown}>
+            {suggestions.map(item => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.suggestionItem}
+                onPress={() => handleSuggestionPress(item)}>
+                <Text numberOfLines={2}>
+                  {item.place_name ||
+                    (item.raw && item.raw.display_name) ||
+                    'Unknown'}
+                </Text>
+                {item.raw && item.raw.address && item.raw.address.country && (
+                  <Text style={{fontSize: 12, color: '#666'}}>
+                    {item.raw.address.country}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {/* Filter Controls */}
+        <View style={styles.filterRow}>
+          <TextInput
+            style={styles.filterInput}
+            placeholder="Min Price"
+            placeholderTextColor="#999"
+            value={minPrice}
+            onChangeText={setMinPrice}
+            keyboardType="numeric"
+          />
+          <TextInput
+            style={styles.filterInput}
+            placeholder="Max Price"
+            placeholderTextColor="#999"
+            value={maxPrice}
+            onChangeText={setMaxPrice}
+            keyboardType="numeric"
+          />
+          <View style={styles.pickerWrapper}>
+            <Picker
+              selectedValue={availability}
+              style={styles.filterPicker}
+              onValueChange={setAvailability}>
+              <Picker.Item label="All" value="all" />
+              <Picker.Item label="Available" value="available" />
+              <Picker.Item label="Unavailable" value="unavailable" />
+            </Picker>
+          </View>
+          <View style={styles.pickerWrapper}>
+            <Picker
+              selectedValue={parkingType}
+              style={styles.filterPicker}
+              onValueChange={setParkingType}>
+              <Picker.Item label="All Types" value="all" />
+              <Picker.Item label="Street" value="street" />
+              <Picker.Item label="Garage" value="garage" />
+            </Picker>
+          </View>
+        </View>
       </View>
 
       {showSuggestions && suggestions.length > 0 && (
@@ -691,6 +858,16 @@ const HomePage = ({navigation}) => {
           </Text>
         </View>
       </TouchableOpacity>
+
+      {/* Nearby Parking Modal */}
+      <NearbyParkingModal
+        visible={showNearbyModal}
+        onClose={() => setShowNearbyModal(false)}
+        spots={nearbySpots}
+        userLocation={userLocation}
+        onBookNow={handleBookNow}
+        onSaveForLater={handleSaveForLater}
+      />
     </View>
   );
 };
@@ -909,9 +1086,21 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    marginBottom: 4,
+    marginBottom: 12,
   },
-
+  findNearbyButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  findNearbyButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   actionsRow: {
     width: '100%',
     flexDirection: 'row',

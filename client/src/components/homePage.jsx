@@ -128,7 +128,6 @@ const HomePage = ({navigation}) => {
     if (userLocation && selectedRouteProfile) {
       createRouterLine(userLocation, selectedRouteProfile);
     }
-  }, [userLocation, selectedRouteProfile]);
   }, [selectedRouteProfile]);
   // Function to find nearby parking spots
   const findNearbyParking = async () => {

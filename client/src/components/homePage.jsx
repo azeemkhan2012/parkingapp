@@ -16,7 +16,6 @@ import {signOut} from '../config/firebase';
 import Icon from 'react-native-vector-icons/FontAwesome5';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import ColorfulCard from '@freakycoder/react-native-colorful-card';
-import {useRoute} from '@react-navigation/native';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -34,7 +33,7 @@ MapboxGL.setAccessToken(
 );
 // MapboxGL.setConnected(true);
 MapboxGL.setTelemetryEnabled(false);
-MapboxGL.setWellKnownTileServer('Mapbox');
+// MapboxGL.setWellKnownTileServer('mapbox');
 Geolocation.setRNConfiguration({
   skipPermissionRequests: false,
   authorizationLevel: 'auto',
@@ -49,19 +48,26 @@ const routeProfiles = [
 const INITIAL_COORDINATE = {
   latitude: 37.78825,
   longitude: -122.4324,
-  zoomLevel: 12,
+  zoomLevel: 17,
 };
 
 const APIKEY =
   'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg';
 
+function speakInstruction(step) {
+  const text = step.maneuver.instruction;
+  Tts.speak(text);
+}
+
 const HomePage = ({navigation}) => {
   const [search, setSearch] = useState('');
-  const [destinationCoords, setDestinationCoords] = useState([24.8021, 67.03]);
+  // destinationCoords uses [longitude, latitude] (GeoJSON order)
+  const [destinationCoords, setDestinationCoords] = useState([67.03, 24.8021]);
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
   const [userLocation, setUserLocation] = useState(null);
   const [selectedRouteProfile, setselectedRouteProfile] = useState('driving');
   const [routeDirections, setRouteDirections] = useState(null);
+  const [routeStartCoords, setRouteStartCoords] = useState(null);
   const [loading, setLoading] = useState(true);
   const [distance, setDistance] = useState(null);
   const [duration, setDuration] = useState(null);
@@ -74,8 +80,6 @@ const HomePage = ({navigation}) => {
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
 
-  const route = useRoute();
-
   // Get device location
   async function getPermissionLocation() {
     try {
@@ -86,7 +90,7 @@ const HomePage = ({navigation}) => {
             longitude: location.coords.longitude,
           });
           setZoom(15);
-          setLoading(false);
+          // setLoading(false);
         },
         err => {
           console.log('location error', err);
@@ -101,13 +105,17 @@ const HomePage = ({navigation}) => {
     }
   }
 
+  // Request device location only once on mount
   useEffect(() => {
     getPermissionLocation();
-    //console.log(store.longitude);
-    if (selectedRouteProfile !== null) {
+  }, []);
+
+  // Recreate a route whenever the start location or the selected profile changes
+  useEffect(() => {
+    if (userLocation && selectedRouteProfile) {
       createRouterLine(userLocation, selectedRouteProfile);
     }
-  }, [selectedRouteProfile]);
+  }, [userLocation, selectedRouteProfile]);
 
   const filteredSpots = [
     {
@@ -243,6 +251,15 @@ const HomePage = ({navigation}) => {
   async function createRouterLine(coords, routeProfile) {
     console.log(coords, 'coords');
 
+    // Guard: need valid start coordinates
+    if (!coords || coords.longitude == null || coords.latitude == null) {
+      console.warn('createRouterLine called with invalid coords:', coords);
+      return;
+    }
+
+    // store start to show an icon marker
+    setRouteStartCoords([coords.longitude, coords.latitude]);
+
     const startCoords = `${coords.longitude},${coords.latitude}`;
 
     const endCoords = `${['67.03005', '24.80234']}`;
@@ -327,12 +344,16 @@ const HomePage = ({navigation}) => {
   const handleSuggestionPress = item => {
     // If we have explicit coordinates, use them. Otherwise fall back to geocoding by name.
     if (item && item.lat != null && item.lon != null) {
-      setUserLocation({
+      const newStart = {
         latitude: Number(item.lat),
         longitude: Number(item.lon),
-      });
+      };
+      setUserLocation(newStart);
       setZoom(15);
       setSearch(item.place_name || (item.raw && item.raw.display_name) || '');
+
+      // Immediately create the route from the selected start (also handled by the userLocation effect)
+      createRouterLine(newStart, selectedRouteProfile);
     } else if (
       item &&
       (item.place_name || (item.raw && item.raw.display_name))
@@ -363,6 +384,8 @@ const HomePage = ({navigation}) => {
         centerCoordinate: [userLocation.longitude, userLocation.latitude],
         zoomLevel: zoom,
         animationMode: 'flyTo',
+        pitch: 90,
+        // heading: location.coords.heading,
         animationDuration: 1000,
       });
     } catch (e) {
@@ -399,7 +422,9 @@ const HomePage = ({navigation}) => {
     // Move camera to follow user
     cameraRef.current?.setCamera({
       centerCoordinate: [userLng, userLat],
-      zoomLevel: 16,
+      zoomLevel: zoom,
+      pitch: 70,
+        // heading: location.coords.heading,
       animationMode: 'flyTo',
       animationDuration: 1000,
     });
@@ -413,7 +438,7 @@ const HomePage = ({navigation}) => {
     if (distance < 20) {
       // Step complete → move to next
       currentStep.shift();
-
+      speakInstruction(nextStep);
       if (currentStep.length === 0) {
         Alert.alert('Arrived!', 'You reached your destination.');
         setIsNavigating(false);
@@ -448,6 +473,7 @@ const HomePage = ({navigation}) => {
       <Icon
         name={item.icon}
         size={24}
+        solid
         color={
           item.id == selectedRouteProfile ? 'white' : 'rgba(255,255,255,0.6)'
         }
@@ -568,7 +594,7 @@ const HomePage = ({navigation}) => {
           await createRouterLine(userLocation, selectedRouteProfile);
         }}>
         <MapboxGL.Camera
-          // ref={cameraRef}
+          ref={cameraRef}
           zoomLevel={zoom}
           centerCoordinate={cameraCenter}
           animationMode="flyTo"
@@ -587,13 +613,25 @@ const HomePage = ({navigation}) => {
           </MapboxGL.ShapeSource>
         )}
 
+        {/* Start marker (when user chooses custom start or location found) */}
+        {routeStartCoords && (
+          <MapboxGL.PointAnnotation id="start" coordinate={routeStartCoords}>
+            <View
+              style={[styles.destinationIcon, {backgroundColor: '#2b9cff'}]}>
+              {/* use 'navigate' which is used elsewhere in the app */}
+              <Ionicons name="navigate" size={22} color="#fff" />
+            </View>
+          </MapboxGL.PointAnnotation>
+        )}
+
+        {/* Destination marker */}
         {destinationCoords && (
           <MapboxGL.PointAnnotation
-            id="user-location"
+            id="destination"
             coordinate={destinationCoords}>
             <View style={styles.destinationIcon}>
               {/* <Ionicons name="storefront" size={24} color="#e1310a" /> */}
-              <Icon name="parking" size={30} color="#900" />
+              <Icon name="parking" size={30} solid color="#900" />
             </View>
           </MapboxGL.PointAnnotation>
         )}

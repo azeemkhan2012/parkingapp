@@ -44,8 +44,14 @@ const NearbyParkingModal = ({
     return spots
       .map(spot => {
         // Get coordinates from various possible structures
-        const lat = spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude;
-        const lon = spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude;
+        const lat =
+          spot.latitude ||
+          spot.original_data?.location?.latitude ||
+          spot.location?.latitude;
+        const lon =
+          spot.longitude ||
+          spot.original_data?.location?.longitude ||
+          spot.location?.longitude;
 
         if (!lat || !lon) return null;
 
@@ -82,20 +88,28 @@ const NearbyParkingModal = ({
     return processedSpots.filter(spot => {
       // Price filter
       const spotPrice = getSpotPrice(spot);
-      const minPriceNum = minPrice && minPrice.trim() ? parseFloat(minPrice) : null;
-      const maxPriceNum = maxPrice && maxPrice.trim() ? parseFloat(maxPrice) : null;
+      const minPriceNum =
+        minPrice && minPrice.trim() ? parseFloat(minPrice) : null;
+      const maxPriceNum =
+        maxPrice && maxPrice.trim() ? parseFloat(maxPrice) : null;
 
-      if (minPriceNum !== null && (isNaN(minPriceNum) || spotPrice < minPriceNum)) {
+      if (
+        minPriceNum !== null &&
+        (isNaN(minPriceNum) || spotPrice < minPriceNum)
+      ) {
         return false;
       }
-      if (maxPriceNum !== null && (isNaN(maxPriceNum) || spotPrice > maxPriceNum)) {
+      if (
+        maxPriceNum !== null &&
+        (isNaN(maxPriceNum) || spotPrice > maxPriceNum)
+      ) {
         return false;
       }
 
       // Availability filter
       const capacity = getSpotCapacity(spot);
       const hasAvailability = capacity.available > 0;
-      
+
       if (availability === 'available' && !hasAvailability) return false;
       if (availability === 'unavailable' && hasAvailability) return false;
 
@@ -103,13 +117,13 @@ const NearbyParkingModal = ({
     });
   }, [processedSpots, minPrice, maxPrice, availability]);
 
-  const handleBookNow = (spot) => {
+  const handleBookNow = async spot => {
     if (onBookNow) {
       onBookNow(spot);
     }
   };
 
-  const handleSaveForLater = (spot) => {
+  const handleSaveForLater = spot => {
     if (onSaveForLater) {
       onSaveForLater(spot);
     }
@@ -121,11 +135,19 @@ const NearbyParkingModal = ({
     const rating = getSpotRating(item);
     const reviewCount = getReviewCount(item);
     const hasAvailability = capacity.available > 0;
-    const address = item.address || item.original_data?.location?.address || item.location?.address || 'Address not available';
+    const address =
+      item.address ||
+      item.original_data?.location?.address ||
+      item.location?.address ||
+      'Address not available';
     const name = item.name || item.location?.name || 'Parking Spot';
 
     return (
-      <View style={[styles.spotCard, !hasAvailability && styles.spotCardUnavailable]}>
+      <View
+        style={[
+          styles.spotCard,
+          !hasAvailability && styles.spotCardUnavailable,
+        ]}>
         <View style={styles.spotHeader}>
           <View style={styles.spotInfo}>
             <Text style={styles.spotName} numberOfLines={1}>
@@ -148,7 +170,9 @@ const NearbyParkingModal = ({
         <View style={styles.spotDetails}>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Distance:</Text>
-            <Text style={styles.detailValue}>{item.distance.toFixed(2)} km</Text>
+            <Text style={styles.detailValue}>
+              {item.distance.toFixed(2)} km
+            </Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Price:</Text>
@@ -158,7 +182,11 @@ const NearbyParkingModal = ({
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Capacity:</Text>
-            <Text style={[styles.detailValue, !hasAvailability && styles.unavailableText]}>
+            <Text
+              style={[
+                styles.detailValue,
+                !hasAvailability && styles.unavailableText,
+              ]}>
               {capacity.available} / {capacity.total} available
             </Text>
           </View>
@@ -166,7 +194,11 @@ const NearbyParkingModal = ({
 
         <View style={styles.spotActions}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.bookButton, !hasAvailability && styles.buttonDisabled]}
+            style={[
+              styles.actionButton,
+              styles.bookButton,
+              !hasAvailability && styles.buttonDisabled,
+            ]}
             onPress={() => handleBookNow(item)}
             disabled={!hasAvailability}>
             <Text style={styles.bookButtonText}>Book Now</Text>
@@ -200,7 +232,10 @@ const NearbyParkingModal = ({
           </View>
 
           {/* Filters Section */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filtersContainer}>
             <View style={styles.filtersRow}>
               {/* Price Range */}
               <View style={styles.filterGroup}>
@@ -255,7 +290,9 @@ const NearbyParkingModal = ({
                   <Picker
                     selectedValue={distanceFilter.toString()}
                     style={styles.picker}
-                    onValueChange={value => setDistanceFilter(parseFloat(value))}>
+                    onValueChange={value =>
+                      setDistanceFilter(parseFloat(value))
+                    }>
                     <Picker.Item label="1 km" value="1" />
                     <Picker.Item label="2 km" value="2" />
                     <Picker.Item label="3 km" value="3" />
@@ -279,7 +316,9 @@ const NearbyParkingModal = ({
             <FlatList
               data={filteredSpots}
               renderItem={renderSpotItem}
-              keyExtractor={item => item.id || item.spot_id || String(Math.random())}
+              keyExtractor={item =>
+                item.id || item.spot_id || String(Math.random())
+              }
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.listContent}
             />
@@ -491,4 +530,3 @@ const styles = StyleSheet.create({
 });
 
 export default NearbyParkingModal;
-

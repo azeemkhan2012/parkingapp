@@ -9,6 +9,7 @@ import {
   Alert,
   FlatList,
   ActivityIndicator,
+  NativeModules,
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
@@ -27,6 +28,8 @@ import {onSnapshot, collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
 import {fetchSFparkSpots} from '../utils/sfpark';
 import NearbyParkingModal from './NearbyParkingModal';
+import functions from '@react-native-firebase/functions';
+import {useStripe} from '@stripe/stripe-react-native';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -44,7 +47,7 @@ MapboxGL.setAccessToken(
 );
 // MapboxGL.setConnected(true);
 MapboxGL.setTelemetryEnabled(false);
-MapboxGL.setWellKnownTileServer('Mapbox');
+// MapboxGL.setWellKnownTileServer('mapbox');
 Geolocation.setRNConfiguration({
   skipPermissionRequests: false,
   authorizationLevel: 'auto',
@@ -85,10 +88,13 @@ const HomePage = ({navigation}) => {
   const [currentStep, setCurrentStep] = useState(null);
 
   const route = useRoute();
+  const stripe = useStripe();
+  const {initPaymentSheet, presentPaymentSheet} = stripe || {};
   const [useSFpark, setUseSFpark] = useState(false);
   const [showNearbyModal, setShowNearbyModal] = useState(false);
   const [nearbySpots, setNearbySpots] = useState([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
+  console.log('NativeModules----', NativeModules.StripeSdk);
 
   // Get device location
   async function getPermissionLocation() {
@@ -121,10 +127,14 @@ const HomePage = ({navigation}) => {
       createRouterLine(userLocation, selectedRouteProfile);
     }
   }, [selectedRouteProfile]);
+
   // Function to find nearby parking spots
   const findNearbyParking = async () => {
     if (!userLocation) {
-      Alert.alert('Location Required', 'Please enable location services to find nearby parking.');
+      Alert.alert(
+        'Location Required',
+        'Please enable location services to find nearby parking.',
+      );
       return;
     }
 
@@ -139,8 +149,14 @@ const HomePage = ({navigation}) => {
 
       // Filter spots that have valid coordinates
       const validSpots = allSpots.filter(spot => {
-        const lat = spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude;
-        const lon = spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude;
+        const lat =
+          spot.latitude ||
+          spot.original_data?.location?.latitude ||
+          spot.location?.latitude;
+        const lon =
+          spot.longitude ||
+          spot.original_data?.location?.longitude ||
+          spot.location?.longitude;
         return lat && lon;
       });
 
@@ -154,8 +170,91 @@ const HomePage = ({navigation}) => {
     }
   };
 
+  async function createPaymentIntent(amount) {
+    const response = await functions().httpsCallable('createPaymentIntent')({
+      amount,
+    });
+
+    return response.data.clientSecret;
+  }
+
+  async function pay(amount) {
+    console.log('===', typeof initPaymentSheet);
+    debugger;
+    if (!initPaymentSheet || !presentPaymentSheet) {
+      Alert.alert('Error', 'Stripe is not ready. Please try again.');
+      console.error('Stripe hooks not available');
+      return;
+    }
+
+    try {
+      const clientSecret = await createPaymentIntent(amount);
+      if (!clientSecret) {
+        console.error('No clientSecret returned!');
+        return;
+      }
+
+      const init = await initPaymentSheet({
+        merchantDisplayName: 'Parking App',
+        paymentIntentClientSecret: clientSecret,
+        allowsDelayedPaymentMethods: true,
+      })
+        .then(d => {
+          console.log('d', d);
+        })
+        .catch(e => {
+          console.log('e', e);
+        });
+      debugger;
+      if (init.error) {
+        console.log('initError: ', init.error);
+        Alert.alert('Error', init.error.message);
+        return;
+      }
+
+      const result = await presentPaymentSheet();
+
+      if (result.error) {
+        console.log('Payment failed:', result.error.message);
+        Alert.alert('Payment Failed', result.error.message);
+      } else {
+        console.log('Payment success!');
+        Alert.alert('Success', 'Payment completed!');
+      }
+    } catch (er) {
+      console.log('er...', er);
+      Alert.alert('Error', er?.message || 'Payment failed');
+    }
+  }
+
+  const testStripeMinimal = async () => {
+    console.log('=== MINIMAL STRIPE TEST ===');
+
+    try {
+      // Test 1: Check hooks are available
+      console.log('Test 1: Hooks available');
+      console.log('initPaymentSheet:', typeof initPaymentSheet);
+      console.log('presentPaymentSheet:', typeof presentPaymentSheet);
+
+      // Test 2: Try with a hardcoded test client secret
+      const testSecret = 'pi_test_secret_123'; // This will fail but shouldn't crash
+
+      console.log('Test 2: Calling initPaymentSheet with test secret');
+      const result = await initPaymentSheet({
+        merchantDisplayName: 'Test',
+        paymentIntentClientSecret: testSecret,
+      });
+
+      console.log('Test result:', result);
+      Alert.alert('Test Result', JSON.stringify(result));
+    } catch (error) {
+      console.error('Test error:', error);
+      Alert.alert('Test Error', error?.message || 'Unknown');
+    }
+  };
+
   // Handle book now action
-  const handleBookNow = async (spot) => {
+  const handleBookNow = async spot => {
     const currentUser = getCurrentUser();
     if (!currentUser) {
       Alert.alert('Login Required', 'Please login to book a parking spot.');
@@ -163,21 +262,24 @@ const HomePage = ({navigation}) => {
     }
 
     try {
-      const result = await bookParkingSpot(spot.id, currentUser.uid);
-      if (result.success) {
-        Alert.alert('Success', 'Parking spot booked successfully!');
-        // Refresh nearby spots
-        findNearbyParking();
-      } else {
-        Alert.alert('Error', result.error || 'Booking failed');
-      }
+      await pay(30000);
+      // await testStripeMinimal();
+      // const result = await bookParkingSpot(spot.id, currentUser.uid);
+      // if (result.success) {
+      //   Alert.alert('Success', 'Parking spot booked successfully!');
+      //   // Refresh nearby spots
+      //   findNearbyParking();
+      // } else {
+      //   Alert.alert('Error', result.error || 'Booking failed');
+      // }
     } catch (error) {
+      console.log('error ---- ', error);
       Alert.alert('Error', 'Failed to book parking spot.');
     }
   };
 
   // Handle save for later action
-  const handleSaveForLater = (spot) => {
+  const handleSaveForLater = spot => {
     // TODO: Implement save for later functionality
     Alert.alert('Saved', 'Parking spot saved for later!');
     console.log('Saving spot for later:', spot);
@@ -554,6 +656,18 @@ const HomePage = ({navigation}) => {
   );
   return (
     <View style={styles.container}>
+      <TouchableOpacity
+        onPress={() => {
+          console.log('Testing Stripe availability...');
+          if (initPaymentSheet) {
+            Alert.alert('Success', 'Stripe is loaded!');
+          } else {
+            Alert.alert('Error', 'Stripe not loaded');
+          }
+        }}
+        style={{padding: 20, backgroundColor: 'blue'}}>
+        <Text style={{color: 'white'}}>Test Stripe</Text>
+      </TouchableOpacity>
       <View style={styles.actionsRow}>
         <TouchableOpacity
           style={styles.editBtn}
@@ -580,7 +694,7 @@ const HomePage = ({navigation}) => {
           onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
           returnKeyType="search"
         />
-        
+
         {/* Find Parking Near Me Button */}
         <TouchableOpacity
           style={styles.findNearbyButton}

@@ -13,9 +13,10 @@ import ForgotPasswordScreen from './src/components/ForgotPasswordScreen';
 import UserProfileEdit from './src/components/UserProfileEdit';
 import NetworkTest from './src/components/NetworkTest';
 // import HomePage from './src/components/homePage';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { NavigationContainer } from '@react-navigation/native';
+import {createNativeStackNavigator} from '@react-navigation/native-stack';
+import {NavigationContainer} from '@react-navigation/native';
 import HomePage from './src/components/homePage';
+import {StripeProvider} from '@stripe/stripe-react-native';
 // import {NavigationContainer} from './node_modules/@react-navigation/native/lib/typescript/src';
 // import {createNativeStackNavigator} from './node_modules/@react-navigation/native-stack/lib/typescript/src';
 
@@ -30,14 +31,19 @@ const Stack = createNativeStackNavigator();
 function App(): React.JSX.Element {
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName="login">
-        <Stack.Screen name="login" component={LoginScreen} />
-        <Stack.Screen name="signup" component={SignUpScreen} />
-        <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-        <Stack.Screen name="home" component={HomePage} />
-        <Stack.Screen name="UserProfileEdit" component={UserProfileEdit} />
-        <Stack.Screen name="NetworkTest" component={NetworkTest} />
-      </Stack.Navigator>
+      <StripeProvider publishableKey="pk_test_51SXKstC1HeXH2oUQuSjQMoH7zT0olUUFg0dQeZshuhyfgwc9TFi5VYyT59GJZXwAotVWnORfoa3QqYU2bEtr4A2T00ecmUBySG">
+        <Stack.Navigator initialRouteName="login">
+          <Stack.Screen name="login" component={LoginScreen} />
+          <Stack.Screen name="signup" component={SignUpScreen} />
+          <Stack.Screen
+            name="ForgotPassword"
+            component={ForgotPasswordScreen}
+          />
+          <Stack.Screen name="home" component={HomePage} />
+          <Stack.Screen name="UserProfileEdit" component={UserProfileEdit} />
+          <Stack.Screen name="NetworkTest" component={NetworkTest} />
+        </Stack.Navigator>
+      </StripeProvider>
     </NavigationContainer>
   );
 }

@@ -13,21 +13,16 @@ import {
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
-import Icon from 'react-native-vector-icons/FontAwesome5';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import ColorfulCard from '@freakycoder/react-native-colorful-card';
 import {useRoute} from '@react-navigation/native';
 import {
-  getParkingSpots,
   bookParkingSpot,
   getCurrentUser,
   signOut,
   saveParkingSpotForLater,
 } from '../config/firebase';
-import {Picker} from '@react-native-picker/picker';
-import {onSnapshot, collection, getDocs} from 'firebase/firestore';
+import {collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
-import {fetchSFparkSpots} from '../utils/sfpark';
 import NearbyParkingModal from './NearbyParkingModal';
 import SavedParkingSpots from './SavedParkingSpots';
 
@@ -53,20 +48,27 @@ Geolocation.setRNConfiguration({
 });
 
 const routeProfiles = [
-  {
-    id: 'walking',
-    label: 'Walking',
-    icon: require('../assets/walking.png'),
-  },
+  // {
+  //   id: 'walking',
+  //   label: 'Walking',
+  //   icon: require('../assets/walking.png'),
+  //   mapboxProfile: 'walking',
+  //   transportKey: 'walking',
+  // },
   {
     id: 'cycling',
     label: 'Cycling',
     icon: require('../assets/bike.png'),
+    mapboxProfile: 'cycling',
+    transportKey: 'bike',
   },
   {
     id: 'driving',
-    label: 'Driving',
+    label: 'Bus',
     icon: require('../assets/car.png'),
+    isBus: true,
+    mapboxProfile: 'driving', // Mapbox doesn’t support bus directly
+    transportKey: 'car', // Use car for bus UI
   },
 ];
 
@@ -85,6 +87,7 @@ const HomePage = ({navigation}) => {
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
   const [userLocation, setUserLocation] = useState(null);
   const [selectedRouteProfile, setselectedRouteProfile] = useState('driving');
+  const [selectedTransportMode, setSelectedTransportMode] = useState('bike'); // 'car', 'bus', 'walking'
   const [routeDirections, setRouteDirections] = useState(null);
   const [loading, setLoading] = useState(true);
   const [distance, setDistance] = useState(null);
@@ -97,6 +100,8 @@ const HomePage = ({navigation}) => {
   const [parkingType, setParkingType] = useState('all');
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
+  const [routeSteps, setRouteSteps] = useState([]);
+  const [destinationName, setDestinationName] = useState('WORK');
 
   const route = useRoute();
   const [useSFpark, setUseSFpark] = useState(false);
@@ -384,8 +389,16 @@ const HomePage = ({navigation}) => {
       console.log(json, 'agdfjahg');
 
       const data = json?.routes.map(data => {
-        setDistance((data.distance / 1000).toFixed(2));
-        setDuration((data.duration / 3600).toFixed(2));
+        setDistance((data.distance / 1000).toFixed(1));
+        // Convert duration from seconds to hours and minutes
+        const totalSeconds = data.duration;
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        if (hours > 0) {
+          setDuration(`${hours}H ${minutes} MIN`);
+        } else {
+          setDuration(`${minutes} MIN`);
+        }
       });
 
       let coordinates = json['routes'][0]['geometry']['coordinates'];
@@ -393,6 +406,7 @@ const HomePage = ({navigation}) => {
         json['routes'][0]['geometry']['coordinates'].slice(-1)[0];
       let steps = json.routes[0].legs[0].steps;
       setCurrentStep(steps);
+      setRouteSteps(steps);
       setDestinationCoords(destinationCoordinates);
       if (coordinates.length) {
         const routerFeature = makeRouterFeature([...coordinates]);
@@ -552,6 +566,8 @@ const HomePage = ({navigation}) => {
     }
   }
 
+  console.log(currentStep, 'currentStep');
+
   function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3;
     const φ1 = (lat1 * Math.PI) / 180;
@@ -566,29 +582,6 @@ const HomePage = ({navigation}) => {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c; // meters
   }
-
-  const renderItem = ({item}) => (
-    <TouchableOpacity
-      style={[
-        styles.routeProfileButton,
-        item.id === selectedRouteProfile && styles.selectedRouteProfileButton,
-      ]}
-      onPress={() => setselectedRouteProfile(item.id)}>
-      <Image
-        source={item.icon}
-        style={{width: 28, height: 28, marginBottom: 4}}
-        resizeMode="contain"
-      />
-      {/* <Text
-        style={[
-          styles.routeProfileButtonText,
-          item.id === selectedRouteProfile &&
-            styles.selectedRouteProfileButtonText,
-        ]}>
-        {item.label}
-      </Text> */}
-    </TouchableOpacity>
-  );
 
   return (
     <View style={styles.container}>
@@ -858,33 +851,66 @@ const HomePage = ({navigation}) => {
           />
         </View>
       )} */}
-      <FlatList
-        data={routeProfiles}
-        renderItem={renderItem}
-        keyExtractor={item => item.id}
-        horizontal
-        contentContainerStyle={styles.routeProfileList}
-        showsHorizontalScrollIndicator={false}
-        style={styles.flatList}
-      />
-      {/* <TouchableOpacity
-        style={[
-          styles.startNavButton,
-          isNavigating && styles.startNavButtonActive,
-        ]}
-        onPress={() => startNavigation()}>
-        <View style={styles.startNavButtonInner}>
-          <Ionicons
-            name={isNavigating ? 'play-skip-forward' : 'car'}
-            size={18}
-            color="#fff"
-            style={{marginRight: 10}}
-          />
-          <Text style={styles.startNavButtonText}>
-            {isNavigating ? 'Stop Navigation' : 'Start Navigation'}
-          </Text>
+      {/* Bottom Route Card */}
+      {routeDirections && distance && duration && (
+        <View style={styles.bottomRouteCard}>
+          {/* Left Section - Route Path */}
+          <View style={styles.routePathSection}>
+            <TouchableOpacity
+              style={styles.startBtn}
+              onPress={() => startNavigation()}>
+              <Text style={styles.startBtnText}>
+                {' '}
+                {isNavigating ? 'Stop' : '▲ START'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Time */}
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>TAKE TIME</Text>
+              <Text style={styles.infoValue}>{duration}</Text>
+            </View>
+          </View>
+
+          <View style={styles.routeInfoSection}>
+            <View style={styles.transportModes}>
+              {routeProfiles.map(profile => {
+                const isSelected =
+                  selectedTransportMode === profile.transportKey;
+
+                return (
+                  <TouchableOpacity
+                    key={profile.id}
+                    style={[
+                      styles.transportModeIcon,
+                      isSelected && styles.transportModeIconSelected,
+                      {marginRight: 8},
+                    ]}
+                    onPress={() => {
+                      setSelectedTransportMode(profile.transportKey);
+                      setselectedRouteProfile(profile.mapboxProfile);
+                    }}>
+                    <Image
+                      source={profile.icon}
+                      style={[
+                        styles.transportIconImage,
+                        isSelected && styles.transportIconImageSelected,
+                      ]}
+                      resizeMode="contain"
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Distance */}
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>DISTANCE</Text>
+              <Text style={styles.infoValue}>{distance} KM</Text>
+            </View>
+          </View>
         </View>
-      </TouchableOpacity> */}
+      )}
 
       {/* Nearby Parking Modal */}
       <NearbyParkingModal
@@ -1319,7 +1345,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   navInstructionInner: {
-    backgroundColor: '#111827',
+    backgroundColor: '#0A84FF',
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
@@ -1393,6 +1419,164 @@ const styles = StyleSheet.create({
 
   selectedRouteProfileButtonText: {
     color: '#000',
+  },
+  // Bottom Route Card Styles
+  bottomRouteCard: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    flexDirection: 'row',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: -4},
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    zIndex: 999,
+  },
+  routePathSection: {
+    flex: 1,
+    paddingRight: 16,
+  },
+  locationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  targetIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  locationText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.5,
+  },
+  routeLineContainer: {
+    position: 'relative',
+    marginLeft: 10,
+    marginVertical: 8,
+    minHeight: 80,
+  },
+  dashedLineContainer: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 2,
+    flexDirection: 'column',
+  },
+  dashSegment: {
+    width: 2,
+    height: 6,
+    backgroundColor: '#FF69B4',
+    marginBottom: 4,
+  },
+  waypointsContainer: {
+    paddingLeft: 20,
+    paddingTop: 4,
+  },
+  waypointItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  waypointDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF69B4',
+    marginRight: 8,
+  },
+  waypointText: {
+    fontSize: 12,
+    color: '#333',
+    flex: 1,
+  },
+  locationFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  routeInfoSection: {
+    flex: 1,
+    paddingLeft: 16,
+    borderLeftWidth: 1,
+    borderLeftColor: '#e0e0e0',
+  },
+  transportModes: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  transportModeIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  transportModeIconSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#fff',
+  },
+  transportIconImage: {
+    width: 24,
+    height: 24,
+    tintColor: '#000',
+  },
+  transportIconImageSelected: {
+    tintColor: '#007AFF',
+  },
+  infoRow: {
+    marginBottom: 12,
+  },
+  infoLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  infoValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  startBtn: {
+    // flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0A84FF',
+    width: 'fitContent',
+    paddingVertical: 10,
+    // paddingHorizontal: 24,
+    borderRadius: 30,
+    // alignSelf: 'center',
+    // elevation: 4,
+    // shadowColor: '#000',
+    // shadowOpacity: 0.2,
+    // shadowRadius: 4,
+    marginBottom: 16,
+    // shadowOffset: {width: 0, height: 2},
+  },
+
+  startBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
 });
 

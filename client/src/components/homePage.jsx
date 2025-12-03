@@ -102,8 +102,8 @@ const HomePage = ({navigation}) => {
       Geolocation.getCurrentPosition(
         location => {
           setUserLocation({
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
+            latitude: 24.938534,
+            longitude: 67.149403,
           });
           setZoom(15);
           setLoading(false);
@@ -171,59 +171,58 @@ const HomePage = ({navigation}) => {
   };
 
   async function createPaymentIntent(amount) {
-    const response = await functions().httpsCallable('createPaymentIntent')({
-      amount,
-    });
+    // This calls the callable Cloud Function above
+    const callable = functions().httpsCallable('createPaymentIntent');
+    const res = await callable({amount, currency: 'pkr'});
 
-    return response.data.clientSecret;
+    console.log('createPaymentIntent response:', res.data);
+    return res.data.clientSecret;
   }
 
   async function pay(amount) {
-    console.log('===', typeof initPaymentSheet);
-    debugger;
     if (!initPaymentSheet || !presentPaymentSheet) {
       Alert.alert('Error', 'Stripe is not ready. Please try again.');
       console.error('Stripe hooks not available');
-      return;
+      return false;
     }
 
     try {
+      // 1) Get clientSecret from Firebase Function
       const clientSecret = await createPaymentIntent(amount);
       if (!clientSecret) {
-        console.error('No clientSecret returned!');
-        return;
+        Alert.alert('Error', 'No client secret returned from server.');
+        return false;
       }
 
-      const init = await initPaymentSheet({
-        merchantDisplayName: 'Parking App',
+      // 2) Initialize PaymentSheet
+      const {error: initError} = await initPaymentSheet({
         paymentIntentClientSecret: clientSecret,
+        merchantDisplayName: 'Parking App',
         allowsDelayedPaymentMethods: true,
-      })
-        .then(d => {
-          console.log('d', d);
-        })
-        .catch(e => {
-          console.log('e', e);
-        });
-      debugger;
-      if (init.error) {
-        console.log('initError: ', init.error);
-        Alert.alert('Error', init.error.message);
-        return;
+      });
+
+      if (initError) {
+        console.log('initPaymentSheet error:', initError);
+        Alert.alert('Error', initError.message);
+        return false;
       }
 
-      const result = await presentPaymentSheet();
+      // 3) Present PaymentSheet
+      const {error: presentError} = await presentPaymentSheet();
 
-      if (result.error) {
-        console.log('Payment failed:', result.error.message);
-        Alert.alert('Payment Failed', result.error.message);
-      } else {
-        console.log('Payment success!');
-        Alert.alert('Success', 'Payment completed!');
+      if (presentError) {
+        console.log('Payment failed:', presentError);
+        Alert.alert('Payment Failed', presentError.message);
+        return false;
       }
-    } catch (er) {
-      console.log('er...', er);
-      Alert.alert('Error', er?.message || 'Payment failed');
+
+      console.log('Payment success!');
+      Alert.alert('Success', 'Payment completed!');
+      return true;
+    } catch (err) {
+      console.log('Payment error...', err);
+      Alert.alert('Error', err?.message || 'Payment failed');
+      return false;
     }
   }
 
@@ -262,16 +261,23 @@ const HomePage = ({navigation}) => {
     }
 
     try {
-      await pay(30000);
-      // await testStripeMinimal();
-      // const result = await bookParkingSpot(spot.id, currentUser.uid);
-      // if (result.success) {
-      //   Alert.alert('Success', 'Parking spot booked successfully!');
-      //   // Refresh nearby spots
-      //   findNearbyParking();
-      // } else {
-      //   Alert.alert('Error', result.error || 'Booking failed');
-      // }
+      // 30,000 = whatever you want in smallest currency unit from backend
+      const paid = await pay(30000);
+
+      if (!paid) {
+        // Payment failed or cancelled – don’t create booking
+        return;
+      }
+
+      // ✅ Only run this after successful payment
+      const result = await bookParkingSpot(spot.id, currentUser.uid);
+
+      if (result?.success) {
+        Alert.alert('Success', 'Parking spot booked successfully!');
+        findNearbyParking(); // refresh list
+      } else {
+        Alert.alert('Error', result?.error || 'Booking failed');
+      }
     } catch (error) {
       console.log('error ---- ', error);
       Alert.alert('Error', 'Failed to book parking spot.');

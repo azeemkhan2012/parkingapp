@@ -1,30 +1,59 @@
-const { onCall } = require("firebase-functions/v2/https");
-const { defineSecret } = require("firebase-functions/params");
-const { initializeApp } = require("firebase-admin/app");
-const stripeLib = require("stripe");
+// functions/index.js
 
-initializeApp();
+const {onCall, HttpsError} = require('firebase-functions/v2/https');
+const {defineSecret} = require('firebase-functions/params');
+const admin = require('firebase-admin');
+const Stripe = require('stripe');
 
-// Define secret (new system)
-const STRIPE_SECRET = defineSecret("STRIPE_SECRET");
+// 🔐 Load secret stored in Secret Manager
+const STRIPE_SECRET = defineSecret('stripe_secret_key');
 
+// Initialize Firebase
+admin.initializeApp();
+
+// Callable Cloud Function
 exports.createPaymentIntent = onCall(
-  { secrets: [STRIPE_SECRET] },
-  async (request) => {
+  {secrets: [STRIPE_SECRET]},
+  async request => {
     try {
-      const { amount } = request.data;
+      console.log(STRIPE_SECRET, 'STRIPE_SECRET');
 
-      const stripe = stripeLib(STRIPE_SECRET.value());
+      const secret = STRIPE_SECRET.value();
+
+      if (!secret) {
+        throw new HttpsError(
+          'failed-precondition',
+          'Stripe secret key is missing.',
+        );
+      }
+
+      const stripe = Stripe(secret);
+
+      const {
+        amount,
+        currency = 'usd',
+        paymentMethodTypes = ['card'],
+      } = request.data || {};
+
+      if (!amount) {
+        throw new HttpsError('invalid-argument', 'Amount is required.');
+      }
+
+      const uid = request.auth?.uid || 'guest';
 
       const paymentIntent = await stripe.paymentIntents.create({
-        amount,
-        currency: "usd",
-        automatic_payment_methods: { enabled: true }
+        amount: parseInt(amount, 10),
+        currency,
+        payment_method_types: paymentMethodTypes,
+        metadata: {uid},
       });
 
-      return { clientSecret: paymentIntent.client_secret };
+      return {
+        clientSecret: paymentIntent.client_secret,
+      };
     } catch (err) {
-      return { error: err.message };
+      console.error('Error creating Payment Intent:', err);
+      throw new HttpsError('internal', err.message);
     }
-  }
+  },
 );

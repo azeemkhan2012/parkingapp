@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // TEMPORARY TESTING RULES - More permissive for debugging
+    // Replace with production rules after testing
+    
+    // Users collection
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Usernames collection
+    match /usernames/{username} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // Parking spots collection
+    match /parking_spots/{spotId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Bookings collection
+    match /bookings/{bookingId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Saved spots collection - PERMISSIVE FOR TESTING
+    // This allows any authenticated user to create/read/update/delete saved spots
+    // IMPORTANT: Replace with stricter rules in production
+    match /saved_spots/{savedSpotId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+

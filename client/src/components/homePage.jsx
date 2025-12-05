@@ -7,17 +7,14 @@ import {
   Text,
   TouchableOpacity,
   Alert,
-  FlatList,
   ActivityIndicator,
-  NativeModules,
   Image,
+  Linking,
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import {useRoute} from '@react-navigation/native';
 import {
-  bookParkingSpot,
   getCurrentUser,
   signOut,
   saveParkingSpotForLater,
@@ -25,7 +22,6 @@ import {
 import {collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
 import NearbyParkingModal from './NearbyParkingModal';
-import functions from '@react-native-firebase/functions';
 import {useStripe} from '@stripe/stripe-react-native';
 import SavedParkingSpots from './SavedParkingSpots';
 
@@ -70,15 +66,15 @@ const routeProfiles = [
     label: 'Bus',
     icon: require('../assets/car.png'),
     isBus: true,
-    mapboxProfile: 'driving', // Mapbox doesn’t support bus directly
-    transportKey: 'car', // Use car for bus UI
+    mapboxProfile: 'driving',
+    transportKey: 'car',
   },
 ];
 
 const INITIAL_COORDINATE = {
   latitude: 37.78825,
   longitude: -122.4324,
-  zoomLevel: 12,
+  zoomLevel: 14,
 };
 
 const APIKEY =
@@ -97,28 +93,16 @@ const HomePage = ({navigation}) => {
   const [duration, setDuration] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [minPrice, setMinPrice] = useState('');
-  const [maxPrice, setMaxPrice] = useState('');
-  const [availability, setAvailability] = useState('all');
-  const [parkingType, setParkingType] = useState('all');
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
   const [routeSteps, setRouteSteps] = useState([]);
-  const [destinationName, setDestinationName] = useState('WORK');
-
-  const route = useRoute();
-  const stripe = useStripe();
-  const {initPaymentSheet, presentPaymentSheet} = stripe || {};
-  const [useSFpark, setUseSFpark] = useState(false);
   const [showNearbyModal, setShowNearbyModal] = useState(false);
   const [nearbySpots, setNearbySpots] = useState([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
-  console.log('NativeModules----', NativeModules.StripeSdk);
   const [showSavedSpots, setShowSavedSpots] = useState(false);
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
 
-  // Get device location
   async function getPermissionLocation() {
     try {
       Geolocation.getCurrentPosition(
@@ -144,13 +128,11 @@ const HomePage = ({navigation}) => {
   }
   useEffect(() => {
     getPermissionLocation();
-    //console.log(store.longitude);
     if (selectedRouteProfile !== null) {
       createRouterLine(userLocation, selectedRouteProfile);
     }
   }, [selectedRouteProfile]);
 
-  // Function to find nearby parking spots
   const findNearbyParking = async () => {
     if (!userLocation) {
       Alert.alert(
@@ -192,122 +174,49 @@ const HomePage = ({navigation}) => {
     }
   };
 
-  async function createPaymentIntent(amount) {
-    const response = await functions().httpsCallable('createPaymentIntent')({
-      amount,
-    });
-
-    return response.data.clientSecret;
-  }
-
-  async function pay(amount) {
-    console.log('===', typeof initPaymentSheet);
-    debugger;
-    if (!initPaymentSheet || !presentPaymentSheet) {
-      Alert.alert('Error', 'Stripe is not ready. Please try again.');
-      console.error('Stripe hooks not available');
-      return;
-    }
-
+  async function startCheckout(spot) {
     try {
-      const clientSecret = await createPaymentIntent(amount);
-      if (!clientSecret) {
-        console.error('No clientSecret returned!');
-        return;
+      const currentUser = getCurrentUser();
+      const hourlyRate = spot.pricing_hourly;
+      const amountCents = hourlyRate * 100; // 40 USD cents → $0.40 (for testing)
+
+      const response = await fetch(
+        `https://us-central1-parking-app-1cb84.cloudfunctions.net/createCheckoutSession`,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            amount: amountCents,
+            spotId: spot.id,
+            userId: currentUser?.uid || null,
+            name: spot.name || 'Parking Spot Booking',
+          }),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok || !data.url) {
+        throw new Error(data.error || 'Failed to create checkout session');
       }
 
-      const init = await initPaymentSheet({
-        merchantDisplayName: 'Parking App',
-        paymentIntentClientSecret: clientSecret,
-        allowsDelayedPaymentMethods: true,
-      })
-        .then(d => {
-          console.log('d', d);
-        })
-        .catch(e => {
-          console.log('e', e);
-        });
-      debugger;
-      if (init.error) {
-        console.log('initError: ', init.error);
-        Alert.alert('Error', init.error.message);
-        return;
-      }
-
-      const result = await presentPaymentSheet();
-
-      if (result.error) {
-        console.log('Payment failed:', result.error.message);
-        Alert.alert('Payment Failed', result.error.message);
-      } else {
-        console.log('Payment success!');
-        Alert.alert('Success', 'Payment completed!');
-      }
-    } catch (er) {
-      console.log('er...', er);
-      Alert.alert('Error', er?.message || 'Payment failed');
+      // Open Stripe Checkout in browser
+      await Linking.openURL(data.url);
+    } catch (err) {
+      console.error('startCheckout error:', err);
+      Alert.alert('Error', err.message || 'Unable to start checkout');
     }
   }
 
-  const testStripeMinimal = async () => {
-    console.log('=== MINIMAL STRIPE TEST ===');
-
-    try {
-      // Test 1: Check hooks are available
-      console.log('Test 1: Hooks available');
-      console.log('initPaymentSheet:', typeof initPaymentSheet);
-      console.log('presentPaymentSheet:', typeof presentPaymentSheet);
-
-      // Test 2: Try with a hardcoded test client secret
-      const testSecret = 'pi_test_secret_123'; // This will fail but shouldn't crash
-
-      console.log('Test 2: Calling initPaymentSheet with test secret');
-      const result = await initPaymentSheet({
-        merchantDisplayName: 'Test',
-        paymentIntentClientSecret: testSecret,
-      });
-
-      console.log('Test result:', result);
-      Alert.alert('Test Result', JSON.stringify(result));
-    } catch (error) {
-      console.error('Test error:', error);
-      Alert.alert('Test Error', error?.message || 'Unknown');
-    }
+  const handleBookNow = spot => {
+    startCheckout(spot);
   };
 
-  // Handle book now action
-  const handleBookNow = async spot => {
-    const currentUser = getCurrentUser();
-    if (!currentUser) {
-      Alert.alert('Login Required', 'Please login to book a parking spot.');
-      return;
-    }
-
-    try {
-      await pay(30000);
-      // await testStripeMinimal();
-      // const result = await bookParkingSpot(spot.id, currentUser.uid);
-      // if (result.success) {
-      //   Alert.alert('Success', 'Parking spot booked successfully!');
-      //   // Refresh nearby spots
-      //   findNearbyParking();
-      // } else {
-      //   Alert.alert('Error', result.error || 'Booking failed');
-      // }
-    } catch (error) {
-      console.log('error ---- ', error);
-      Alert.alert('Error', 'Failed to book parking spot.');
-    }
-  };
-
-  // Handle save for later action
   const handleSaveForLater = async spot => {
     const currentUser = getCurrentUser();
     if (!currentUser) {
       Alert.alert('Login Required', 'Please login to save parking spots.');
       return;
     }
-    console.log(spot, 'spot');
     try {
       const result = await saveParkingSpotForLater(currentUser.uid, spot);
       if (result.success) {
@@ -320,99 +229,6 @@ const HomePage = ({navigation}) => {
     }
   };
 
-  // const filteredSpots = spots.filter(spot => {
-  //   const matchesSearch =
-  //     !search.trim() ||
-  //     (spot.location &&
-  //       spot.location.toLowerCase().includes(search.toLowerCase()));
-  //   const matchesPrice =
-  //     (!minPrice || spot.price >= parseFloat(minPrice)) &&
-  //     (!maxPrice || spot.price <= parseFloat(maxPrice));
-  //   const matchesAvailability =
-  //     availability === 'all' ||
-  //     (availability === 'available' && spot.is_available) ||
-  //     (availability === 'unavailable' && !spot.is_available);
-  //   const matchesType = parkingType === 'all' || spot.type === parkingType;
-  //   return matchesSearch && matchesPrice && matchesAvailability && matchesType;
-  // });
-
-  const filteredSpots = [
-    {
-      spot_id: 'khi_128',
-      id: 'khi_128',
-
-      name: 'Midway Commercial Parking',
-      type: 'lot',
-
-      // Location
-      latitude: 25.0312,
-      longitude: 67.2823,
-      address: 'Midway Commercial, Bahria Town, Karachi',
-      city: 'Karachi',
-      area: 'Bahria Town',
-
-      // Pricing
-      pricing_currency: 'PKR',
-      pricing_hourly: 40,
-      pricing_daily: 200,
-      pricing_freeFor: null,
-
-      // Availability
-      availability_available: 58,
-      availability_total: 150,
-
-      // Hours
-      hours_open: '08:00',
-      hours_close: '23:00',
-      hours_is24Hours: false,
-
-      // Amenities
-      amenities: ['security'],
-
-      // Restrictions
-      restrictions: [],
-
-      // Rating
-      rating: 3.8,
-      reviewCount: 103,
-
-      isActive: true,
-
-      created_at: '2025-11-18T19:22:35Z',
-      updated_at: '2025-11-18T19:22:35Z',
-
-      // Full structured object (optional)
-      original_data: {
-        location: {
-          name: 'Midway Commercial Parking',
-          address: 'Midway Commercial, Bahria Town, Karachi',
-          latitude: 25.0312,
-          longitude: 67.2823,
-        },
-        availability: {
-          available: 58,
-          total: 150,
-        },
-        pricing: {
-          currency: 'PKR',
-          hourly: 40,
-          daily: 200,
-          freeFor: null,
-        },
-        hours: {
-          open: '08:00',
-          close: '23:00',
-          is24Hours: false,
-        },
-        amenities: ['security'],
-        restrictions: [],
-        rating: 3.8,
-        reviewCount: 103,
-      },
-    },
-  ];
-
-  // Geocode address to coordinates (using Mapbox API)
   const geocodeAddress = async address => {
     try {
       // Use LocationIQ forward geocoding (search) to get coordinates
@@ -468,8 +284,6 @@ const HomePage = ({navigation}) => {
   }
 
   async function createRouterLine(coords, routeProfile) {
-    console.log(coords, 'coords');
-
     const startCoords = `${coords.longitude},${coords.latitude}`;
 
     const endCoords = `${['67.03005', '24.80234']}`;
@@ -479,7 +293,6 @@ const HomePage = ({navigation}) => {
     try {
       let response = await fetch(url);
       let json = await response.json();
-      console.log(json, 'agdfjahg');
 
       const data = json?.routes.map(data => {
         setDistance((data.distance / 1000).toFixed(1));
@@ -498,13 +311,13 @@ const HomePage = ({navigation}) => {
       let destinationCoordinates =
         json['routes'][0]['geometry']['coordinates'].slice(-1)[0];
       let steps = json.routes[0].legs[0].steps;
+      console.log(destinationCoordinates, 'destinationCoordinates');
+
       setCurrentStep(steps);
       setRouteSteps(steps);
       setDestinationCoords(destinationCoordinates);
       if (coordinates.length) {
         const routerFeature = makeRouterFeature([...coordinates]);
-        console.log(routerFeature, 'routerFeature');
-
         setRouteDirections(routerFeature);
       }
       setLoading(false);
@@ -634,8 +447,9 @@ const HomePage = ({navigation}) => {
 
     // Move camera to follow user
     cameraRef.current?.setCamera({
-      centerCoordinate: [userLng, userLat],
-      zoomLevel: 16,
+      centerCoordinate: isNavigating && [userLng, userLat],
+      zoomLevel: isNavigating ? 16 : 14,
+      pitch: isNavigating ? 70 : 0,
       animationMode: 'flyTo',
       animationDuration: 1000,
     });
@@ -658,8 +472,6 @@ const HomePage = ({navigation}) => {
       }
     }
   }
-
-  console.log(currentStep, 'currentStep');
 
   function getDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3;
@@ -690,6 +502,18 @@ const HomePage = ({navigation}) => {
             source={require('../assets/search.png')}
             style={styles.iconButtonImage}
           />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={!loadingNearby ? styles.findNearbyButton : {}}
+          onPress={findNearbyParking}
+          disabled={loadingNearby || !userLocation}>
+          {loadingNearby ? (
+            <ActivityIndicator color="#999" />
+          ) : (
+            <Text style={styles.findNearbyButtonText}>
+              🚗 Find Parking Near Me
+            </Text>
+          )}
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.iconButton}
@@ -789,21 +613,6 @@ const HomePage = ({navigation}) => {
         </View>
       )}
 
-      {/* Find Parking Near Me Button - Always visible */}
-      <View style={styles.actionButtonsContainer}>
-        <TouchableOpacity
-          style={styles.findNearbyButton}
-          onPress={findNearbyParking}
-          disabled={loadingNearby || !userLocation}>
-          {loadingNearby ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.findNearbyButtonText}>
-              🚗 Find Parking Near Me
-            </Text>
-          )}
-        </TouchableOpacity>
-      </View>
       {/* Suggestions dropdown - shown when search bar is visible */}
       {showSearchBar && showSuggestions && suggestions.length > 0 && (
         <View style={styles.suggestionsDropdown}>
@@ -847,7 +656,10 @@ const HomePage = ({navigation}) => {
         <View style={styles.navInstructionWrap} pointerEvents="box-none">
           <View style={styles.navInstructionInner}>
             <View style={styles.navIconContainer}>
-              <Ionicons name="navigate" size={22} color="#fff" />
+              <Image
+              source={require('../assets/navigate.png')}
+              style={styles.navigateIcon}
+            />
             </View>
             <View style={styles.navTextContainer}>
               <Text numberOfLines={2} style={styles.navInstructionText}>
@@ -869,7 +681,10 @@ const HomePage = ({navigation}) => {
             <TouchableOpacity
               style={styles.navCloseBtn}
               onPress={() => setIsNavigating(false)}>
-              <Ionicons name="close" size={18} color="#fff" />
+              <Image
+                source={require('../assets/close.png')}
+                style={styles.navigateIcon}
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -884,7 +699,7 @@ const HomePage = ({navigation}) => {
           await createRouterLine(userLocation, selectedRouteProfile);
         }}>
         <MapboxGL.Camera
-          // ref={cameraRef}
+          ref={cameraRef}
           zoomLevel={zoom}
           centerCoordinate={cameraCenter}
           animationMode="flyTo"
@@ -905,8 +720,8 @@ const HomePage = ({navigation}) => {
 
         {destinationCoords && (
           <MapboxGL.PointAnnotation
-            id="user-location"
-            coordinate={destinationCoords}>
+            id="parking-location"
+            coordinate={[destinationCoords[0], destinationCoords[1]]}>
             <View style={styles.destinationIcon}>
               <Image
                 source={require('../assets/parking.png')}
@@ -920,31 +735,12 @@ const HomePage = ({navigation}) => {
           androidRenderMode={'gps'}
           showsUserHeadingIndicator={true}
           onUpdate={loc => {
-            if (isNavigating) handleNavigationUpdate(loc);
+            handleNavigationUpdate(loc);
           }}
         />
 
         {/* Show parking spots */}
       </MapboxGL.MapView>
-      {filteredSpots.length === 0 && (
-        <View style={styles.noResults}>
-          <Text>No parking spots found.</Text>
-        </View>
-      )}
-      {/* {routeDirections && (
-        <View style={styles.cardContainer}>
-          <ColorfulCard
-            title={`Dollmen Shopping Center`}
-            value={`${duration} h`}
-            footerTitle="Distance"
-            footerValue={`${distance} km`}
-            iconImageSource={require('../assets/info.png')}
-            style={{backgroundColor: '#33495F'}}
-            onPress={() => {}}
-          />
-        </View>
-      )} */}
-      {/* Bottom Route Card */}
       {routeDirections && distance && duration && (
         <View style={styles.bottomRouteCard}>
           {/* Left Section - Route Path */}
@@ -1455,6 +1251,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+  },
+  navigateIcon: {
+    width: 24,
+    height: 24,
+    tintColor: '#fff',
   },
   navTextContainer: {
     flex: 1,

@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the document
+    function isOwner() {
+      return request.auth.uid == resource.data.user_id;
+    }
+    
+    // Helper function to check if user is setting their own user_id on create
+    function isCreatingOwn() {
+      return request.auth.uid == request.resource.data.user_id;
+    }
+    
+    // Users collection - users can read/write their own profile
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Usernames collection - read for all authenticated users, write only for own username
+    match /usernames/{username} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (resource == null || isOwner());
+    }
+    
+    // Parking spots collection - read for all authenticated users
+    match /parking_spots/{spotId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+    
+    // Bookings collection - users can read/write their own bookings
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (resource == null || isOwner());
+      allow create: if isAuthenticated() && isCreatingOwn();
+      allow update, delete: if isAuthenticated() && isOwner();
+    }
+    
+    // Saved spots collection - users can read/write their own saved spots
+    match /saved_spots/{savedSpotId} {
+      // Allow read if user is authenticated and owns the document (or document doesn't exist yet)
+      allow read: if isAuthenticated() && (resource == null || isOwner());
+      // Allow create if user is authenticated and sets their own user_id
+      allow create: if isAuthenticated() && isCreatingOwn();
+      // Allow update/delete if user is authenticated and owns the document
+      allow update, delete: if isAuthenticated() && isOwner();
+    }
+  }
+}
+

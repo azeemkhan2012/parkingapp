@@ -15,8 +15,8 @@ import {
 } from '../config/firebase';
 
 const LoginScreen = ({navigation}) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('azeem@gmail.com');
+  const [password, setPassword] = useState('123456');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async () => {

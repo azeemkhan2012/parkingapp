@@ -8,7 +8,6 @@ import {
   FlatList,
   TextInput,
   ScrollView,
-  Alert,
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import {
@@ -18,6 +17,7 @@ import {
   getSpotRating,
   getReviewCount,
 } from '../utils/parkingUtils';
+import ParkingDetailModal from './ParkingDetailModal';
 
 /**
  * Modal Component showing nearby parking spots with filters
@@ -36,6 +36,7 @@ const NearbyParkingModal = ({
   const [maxPrice, setMaxPrice] = useState('');
   const [availability, setAvailability] = useState('all');
   const [distanceFilter, setDistanceFilter] = useState(5); // Default 5km
+  const [selectedSpot, setSelectedSpot] = useState(null); // For detail popup
 
   // Calculate distances and filter spots
   const processedSpots = useMemo(() => {
@@ -44,8 +45,14 @@ const NearbyParkingModal = ({
     return spots
       .map(spot => {
         // Get coordinates from various possible structures
-        const lat = spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude;
-        const lon = spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude;
+        const lat =
+          spot.latitude ||
+          spot.original_data?.location?.latitude ||
+          spot.location?.latitude;
+        const lon =
+          spot.longitude ||
+          spot.original_data?.location?.longitude ||
+          spot.location?.longitude;
 
         if (!lat || !lon) return null;
 
@@ -82,20 +89,28 @@ const NearbyParkingModal = ({
     return processedSpots.filter(spot => {
       // Price filter
       const spotPrice = getSpotPrice(spot);
-      const minPriceNum = minPrice && minPrice.trim() ? parseFloat(minPrice) : null;
-      const maxPriceNum = maxPrice && maxPrice.trim() ? parseFloat(maxPrice) : null;
+      const minPriceNum =
+        minPrice && minPrice.trim() ? parseFloat(minPrice) : null;
+      const maxPriceNum =
+        maxPrice && maxPrice.trim() ? parseFloat(maxPrice) : null;
 
-      if (minPriceNum !== null && (isNaN(minPriceNum) || spotPrice < minPriceNum)) {
+      if (
+        minPriceNum !== null &&
+        (isNaN(minPriceNum) || spotPrice < minPriceNum)
+      ) {
         return false;
       }
-      if (maxPriceNum !== null && (isNaN(maxPriceNum) || spotPrice > maxPriceNum)) {
+      if (
+        maxPriceNum !== null &&
+        (isNaN(maxPriceNum) || spotPrice > maxPriceNum)
+      ) {
         return false;
       }
 
       // Availability filter
       const capacity = getSpotCapacity(spot);
       const hasAvailability = capacity.available > 0;
-      
+
       if (availability === 'available' && !hasAvailability) return false;
       if (availability === 'unavailable' && hasAvailability) return false;
 
@@ -103,13 +118,15 @@ const NearbyParkingModal = ({
     });
   }, [processedSpots, minPrice, maxPrice, availability]);
 
-  const handleBookNow = (spot) => {
-    if (onBookNow) {
-      onBookNow(spot);
-    }
+  const handleViewDetail = (spot) => {
+    setSelectedSpot(spot);
   };
 
-  const handleSaveForLater = (spot) => {
+  const handleCloseDetail = () => {
+    setSelectedSpot(null);
+  };
+
+  const handleSaveForLater = spot => {
     if (onSaveForLater) {
       onSaveForLater(spot);
     }
@@ -121,11 +138,19 @@ const NearbyParkingModal = ({
     const rating = getSpotRating(item);
     const reviewCount = getReviewCount(item);
     const hasAvailability = capacity.available > 0;
-    const address = item.address || item.original_data?.location?.address || item.location?.address || 'Address not available';
+    const address =
+      item.address ||
+      item.original_data?.location?.address ||
+      item.location?.address ||
+      'Address not available';
     const name = item.name || item.location?.name || 'Parking Spot';
 
     return (
-      <View style={[styles.spotCard, !hasAvailability && styles.spotCardUnavailable]}>
+      <View
+        style={[
+          styles.spotCard,
+          !hasAvailability && styles.spotCardUnavailable,
+        ]}>
         <View style={styles.spotHeader}>
           <View style={styles.spotInfo}>
             <Text style={styles.spotName} numberOfLines={1}>
@@ -148,7 +173,9 @@ const NearbyParkingModal = ({
         <View style={styles.spotDetails}>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Distance:</Text>
-            <Text style={styles.detailValue}>{item.distance.toFixed(2)} km</Text>
+            <Text style={styles.detailValue}>
+              {item.distance.toFixed(2)} km
+            </Text>
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Price:</Text>
@@ -158,7 +185,11 @@ const NearbyParkingModal = ({
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Capacity:</Text>
-            <Text style={[styles.detailValue, !hasAvailability && styles.unavailableText]}>
+            <Text
+              style={[
+                styles.detailValue,
+                !hasAvailability && styles.unavailableText,
+              ]}>
               {capacity.available} / {capacity.total} available
             </Text>
           </View>
@@ -166,10 +197,9 @@ const NearbyParkingModal = ({
 
         <View style={styles.spotActions}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.bookButton, !hasAvailability && styles.buttonDisabled]}
-            onPress={() => handleBookNow(item)}
-            disabled={!hasAvailability}>
-            <Text style={styles.bookButtonText}>Book Now</Text>
+            style={[styles.actionButton, styles.bookButton]}
+            onPress={() => handleViewDetail(item)}>
+            <Text style={styles.bookButtonText}>View Detail</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, styles.saveButton]}
@@ -181,112 +211,122 @@ const NearbyParkingModal = ({
     );
   };
 
+
   return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              Nearby Parking ({filteredSpots.length})
-            </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Filters Section */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersContainer}>
-            <View style={styles.filtersRow}>
-              {/* Price Range */}
-              <View style={styles.filterGroup}>
-                <Text style={styles.filterLabel}>Price Range</Text>
-                <View style={styles.priceInputs}>
-                  <TextInput
-                    style={styles.priceInput}
-                    placeholder="Min"
-                    placeholderTextColor="#999"
-                    value={minPrice}
-                    onChangeText={text => {
-                      // Only allow numbers and decimal point
-                      const cleaned = text.replace(/[^0-9.]/g, '');
-                      setMinPrice(cleaned);
-                    }}
-                    keyboardType="numeric"
-                  />
-                  <Text style={styles.priceSeparator}>-</Text>
-                  <TextInput
-                    style={styles.priceInput}
-                    placeholder="Max"
-                    placeholderTextColor="#999"
-                    value={maxPrice}
-                    onChangeText={text => {
-                      const cleaned = text.replace(/[^0-9.]/g, '');
-                      setMaxPrice(cleaned);
-                    }}
-                    keyboardType="numeric"
-                  />
-                </View>
-              </View>
-
-              {/* Availability Filter */}
-              <View style={styles.filterGroup}>
-                <Text style={styles.filterLabel}>Availability</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={availability}
-                    style={styles.picker}
-                    onValueChange={setAvailability}>
-                    <Picker.Item label="All" value="all" />
-                    <Picker.Item label="Available" value="available" />
-                    <Picker.Item label="Unavailable" value="unavailable" />
-                  </Picker>
-                </View>
-              </View>
-
-              {/* Distance Filter */}
-              <View style={styles.filterGroup}>
-                <Text style={styles.filterLabel}>Distance</Text>
-                <View style={styles.pickerContainer}>
-                  <Picker
-                    selectedValue={distanceFilter.toString()}
-                    style={styles.picker}
-                    onValueChange={value => setDistanceFilter(parseFloat(value))}>
-                    <Picker.Item label="1 km" value="1" />
-                    <Picker.Item label="2 km" value="2" />
-                    <Picker.Item label="3 km" value="3" />
-                    <Picker.Item label="4 km" value="4" />
-                    <Picker.Item label="5 km" value="5" />
-                  </Picker>
-                </View>
-              </View>
-            </View>
-          </ScrollView>
-
-          {/* Results List */}
-          {filteredSpots.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No parking spots found</Text>
-              <Text style={styles.emptySubtext}>
-                Try adjusting your filters or search radius
+    <>
+      <Modal
+        visible={visible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={onClose}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {/* Header */}
+            <View style={styles.header}>
+              <Text style={styles.title}>
+                Nearby Parking ({filteredSpots.length})
               </Text>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
             </View>
-          ) : (
-            <FlatList
-              data={filteredSpots}
-              renderItem={renderSpotItem}
-              keyExtractor={item => item.id || item.spot_id || String(Math.random())}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.listContent}
-            />
-          )}
+
+            {/* Filters Section */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersContainer}>
+              <View style={styles.filtersRow}>
+                {/* Price Range */}
+                <View style={styles.filterGroup}>
+                  <Text style={styles.filterLabel}>Price Range</Text>
+                  <View style={styles.priceInputs}>
+                    <TextInput
+                      style={styles.priceInput}
+                      placeholder="Min"
+                      placeholderTextColor="#999"
+                      value={minPrice}
+                      onChangeText={text => {
+                        // Only allow numbers and decimal point
+                        const cleaned = text.replace(/[^0-9.]/g, '');
+                        setMinPrice(cleaned);
+                      }}
+                      keyboardType="numeric"
+                    />
+                    <Text style={styles.priceSeparator}>-</Text>
+                    <TextInput
+                      style={styles.priceInput}
+                      placeholder="Max"
+                      placeholderTextColor="#999"
+                      value={maxPrice}
+                      onChangeText={text => {
+                        const cleaned = text.replace(/[^0-9.]/g, '');
+                        setMaxPrice(cleaned);
+                      }}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                </View>
+
+                {/* Availability Filter */}
+                <View style={styles.filterGroup}>
+                  <Text style={styles.filterLabel}>Availability</Text>
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={availability}
+                      style={styles.picker}
+                      onValueChange={setAvailability}>
+                      <Picker.Item label="All" value="all" />
+                      <Picker.Item label="Available" value="available" />
+                      <Picker.Item label="Unavailable" value="unavailable" />
+                    </Picker>
+                  </View>
+                </View>
+
+                {/* Distance Filter */}
+                <View style={styles.filterGroup}>
+                  <Text style={styles.filterLabel}>Distance</Text>
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={distanceFilter.toString()}
+                      style={styles.picker}
+                      onValueChange={value => setDistanceFilter(parseFloat(value))}>
+                      <Picker.Item label="1 km" value="1" />
+                      <Picker.Item label="2 km" value="2" />
+                      <Picker.Item label="3 km" value="3" />
+                      <Picker.Item label="4 km" value="4" />
+                      <Picker.Item label="5 km" value="5" />
+                    </Picker>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Results List */}
+            {filteredSpots.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>No parking spots found</Text>
+                <Text style={styles.emptySubtext}>
+                  Try adjusting your filters or search radius
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredSpots}
+                renderItem={renderSpotItem}
+                keyExtractor={item => item.id || item.spot_id || String(Math.random())}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.listContent}
+              />
+            )}
+          </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
+      <ParkingDetailModal
+        visible={selectedSpot !== null}
+        onClose={handleCloseDetail}
+        spot={selectedSpot}
+        onBookNow={onBookNow}
+        onSaveForLater={onSaveForLater}
+      />
+    </>
   );
 };
 
@@ -491,4 +531,3 @@ const styles = StyleSheet.create({
 });
 
 export default NearbyParkingModal;
-

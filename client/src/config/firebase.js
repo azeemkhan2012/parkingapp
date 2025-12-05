@@ -25,6 +25,7 @@ import {
   setDoc,
   updateDoc,
   addDoc,
+  deleteDoc,
   serverTimestamp,
   writeBatch,
   runTransaction
@@ -371,6 +372,195 @@ export const createParkingSpot = async spotData => {
   }
 };
 
+// -------------------- Saved Parking Spots --------------------
+export const saveParkingSpotForLater = async (userId, spotData) => {
+  try {
+    // Extract required fields only
+    const title = spotData.name || spotData.location?.name || spotData.title || 'Parking Spot';
+    const address = spotData.address || spotData.original_data?.location?.address || spotData.location?.address || 'Address not available';
+    
+    // Extract price
+    let price = 0;
+    if (spotData.pricing_hourly) price = spotData.pricing_hourly;
+    else if (spotData.pricing_daily) price = spotData.pricing_daily;
+    else if (spotData.price) {
+      if (typeof spotData.price === 'number') price = spotData.price;
+      else if (typeof spotData.price === 'string') {
+        const match = spotData.price.match(/\d+(\.\d+)?/);
+        price = match ? parseFloat(match[0]) : 0;
+      }
+    } else if (spotData.pricing?.hourly) price = spotData.pricing.hourly;
+    else if (spotData.pricing?.daily) price = spotData.pricing.daily;
+    
+    // Extract capacity
+    let capacity = { available: 0, total: 0 };
+    if (spotData.availability_available !== undefined && spotData.availability_total !== undefined) {
+      capacity = {
+        available: spotData.availability_available,
+        total: spotData.availability_total,
+      };
+    } else if (spotData.availability?.available && spotData.availability?.total) {
+      capacity = {
+        available: spotData.availability.available,
+        total: spotData.availability.total,
+      };
+    }
+    
+    // Get distance (if already calculated)
+    const distance = spotData.distance || null;
+    
+    // Get coordinates for duplicate checking
+    const lat = spotData.latitude || spotData.original_data?.location?.latitude || spotData.location?.latitude;
+    const lon = spotData.longitude || spotData.original_data?.location?.longitude || spotData.location?.longitude;
+    const spotId = spotData.id || spotData.spot_id || '';
+    
+    // Check if already saved - wrapped in try-catch to avoid permission errors
+    const savedSpotsRef = collection(db, 'saved_spots');
+    let existingDocs = {empty: true, docs: []};
+    
+    try {
+      if (spotId) {
+        const q = query(
+          savedSpotsRef,
+          where('user_id', '==', userId),
+          where('spot_id', '==', spotId),
+        );
+        existingDocs = await getDocs(q);
+      } else if (lat && lon) {
+        // If no ID, check by coordinates (approximate match)
+        const q = query(
+          savedSpotsRef,
+          where('user_id', '==', userId),
+        );
+        const allUserSpots = await getDocs(q);
+        existingDocs = {
+          empty: !allUserSpots.docs.some(doc => {
+            const savedData = doc.data();
+            const savedLat = savedData.latitude;
+            const savedLon = savedData.longitude;
+            // Check if coordinates are very close (within 0.0001 degrees, ~11 meters)
+            return savedLat && savedLon && 
+                   Math.abs(savedLat - lat) < 0.0001 && 
+                   Math.abs(savedLon - lon) < 0.0001;
+          }),
+          docs: allUserSpots.docs.filter(doc => {
+            const savedData = doc.data();
+            const savedLat = savedData.latitude;
+            const savedLon = savedData.longitude;
+            return savedLat && savedLon && 
+                   Math.abs(savedLat - lat) < 0.0001 && 
+                   Math.abs(savedLon - lon) < 0.0001;
+          }),
+        };
+      }
+    } catch (checkError) {
+      // If duplicate check fails due to permissions, skip it and allow save
+      // This is okay - we'll handle duplicates on the client side if needed
+      console.warn('Could not check for duplicates:', checkError.message);
+      existingDocs = {empty: true, docs: []};
+    }
+    
+    if (!existingDocs.empty) {
+      return {success: false, error: 'Spot already saved'};
+    }
+
+    // Prepare data object - only include fields with values
+    const savedData = {
+      user_id: userId,
+      title: title,
+      address: address,
+      price: price || 0,
+      capacity_available: capacity.available || 0,
+      capacity_total: capacity.total || 0,
+      saved_at: serverTimestamp(),
+    };
+    
+    // Add optional fields only if they have values
+    if (spotId) savedData.spot_id = spotId;
+    if (distance !== null && distance !== undefined) savedData.distance = distance;
+    if (lat) savedData.latitude = lat;
+    if (lon) savedData.longitude = lon;
+    
+    // Debug: Log the data being saved
+    console.log('Saving parking spot with data:', {
+      ...savedData,
+      saved_at: 'serverTimestamp()', // Don't log the actual timestamp function
+    });
+    console.log('Current user ID:', userId);
+    const currentUser = getCurrentUser();
+    console.log('Current auth user:', currentUser?.uid);
+    
+    // Verify user_id matches current user
+    if (!currentUser || userId !== currentUser.uid) {
+      return {success: false, error: 'User ID mismatch or not authenticated'};
+    }
+    
+    // Save only the required fields in a simple structure
+    const docRef = await addDoc(savedSpotsRef, savedData);
+    return {success: true, id: docRef.id};
+  } catch (error) {
+    console.error('Error saving parking spot:', error);
+    console.error('Error code:', error.code);
+    console.error('Error message:', error.message);
+    return {success: false, error: error.message};
+  }
+};
+
+export const getSavedParkingSpots = async userId => {
+  try {
+    const savedSpotsRef = collection(db, 'saved_spots');
+    const q = query(savedSpotsRef, where('user_id', '==', userId));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => {
+      const data = d.data();
+      // Convert back to format expected by components
+      return {
+        id: d.id,
+        savedSpotId: d.id,
+        name: data.title,
+        title: data.title,
+        address: data.address,
+        price: data.price,
+        pricing_hourly: data.price,
+        distance: data.distance,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        availability_available: data.capacity_available,
+        availability_total: data.capacity_total,
+        spot_id: data.spot_id,
+        saved_at: data.saved_at,
+      };
+    });
+  } catch (error) {
+    console.error('Error getting saved spots:', error);
+    return [];
+  }
+};
+
+export const removeSavedParkingSpot = async (savedSpotId) => {
+  try {
+    const savedSpotRef = doc(db, 'saved_spots', savedSpotId);
+    await updateDoc(savedSpotRef, {
+      removed_at: serverTimestamp(),
+    });
+    // Or delete it completely
+    // await deleteDoc(savedSpotRef);
+    return {success: true};
+  } catch (error) {
+    return {success: false, error: error.message};
+  }
+};
+
+export const deleteSavedParkingSpot = async (savedSpotId) => {
+  try {
+    const savedSpotRef = doc(db, 'saved_spots', savedSpotId);
+    await deleteDoc(savedSpotRef);
+    return {success: true};
+  } catch (error) {
+    return {success: false, error: error.message};
+  }
+};
+
 export default {
   auth,
   db,
@@ -383,6 +573,10 @@ export default {
   getParkingSpots,
   bookParkingSpot,
   createParkingSpot,
+  saveParkingSpotForLater,
+  getSavedParkingSpots,
+  removeSavedParkingSpot,
+  deleteSavedParkingSpot,
   // extras
   isUsernameAvailable,
   reserveUsername,

@@ -7,26 +7,23 @@ import {
   Text,
   TouchableOpacity,
   Alert,
-  FlatList,
   ActivityIndicator,
+  Image,
+  Linking,
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
-import Icon from 'react-native-vector-icons/FontAwesome5';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import ColorfulCard from '@freakycoder/react-native-colorful-card';
-import {useRoute} from '@react-navigation/native';
 import {
-  getParkingSpots,
-  bookParkingSpot,
   getCurrentUser,
   signOut,
+  saveParkingSpotForLater,
 } from '../config/firebase';
-import {Picker} from '@react-native-picker/picker';
-import {onSnapshot, collection, getDocs} from 'firebase/firestore';
+import {collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
-import {fetchSFparkSpots} from '../utils/sfpark';
 import NearbyParkingModal from './NearbyParkingModal';
+import {useStripe} from '@stripe/stripe-react-native';
+import SavedParkingSpots from './SavedParkingSpots';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -44,22 +41,40 @@ MapboxGL.setAccessToken(
 );
 // MapboxGL.setConnected(true);
 MapboxGL.setTelemetryEnabled(false);
-MapboxGL.setWellKnownTileServer('Mapbox');
 Geolocation.setRNConfiguration({
   skipPermissionRequests: false,
   authorizationLevel: 'auto',
 });
 
 const routeProfiles = [
-  {id: 'walking', label: 'Walking', icon: 'walking'},
-  {id: 'cycling', label: 'Cylcing', icon: 'bicycle'},
-  {id: 'driving', label: 'Driving', icon: 'car'},
+  // {
+  //   id: 'walking',
+  //   label: 'Walking',
+  //   icon: require('../assets/walking.png'),
+  //   mapboxProfile: 'walking',
+  //   transportKey: 'walking',
+  // },
+  {
+    id: 'cycling',
+    label: 'Cycling',
+    icon: require('../assets/bike.png'),
+    mapboxProfile: 'cycling',
+    transportKey: 'bike',
+  },
+  {
+    id: 'driving',
+    label: 'Bus',
+    icon: require('../assets/car.png'),
+    isBus: true,
+    mapboxProfile: 'driving',
+    transportKey: 'car',
+  },
 ];
 
 const INITIAL_COORDINATE = {
   latitude: 37.78825,
   longitude: -122.4324,
-  zoomLevel: 12,
+  zoomLevel: 14,
 };
 
 const APIKEY =
@@ -71,26 +86,23 @@ const HomePage = ({navigation}) => {
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
   const [userLocation, setUserLocation] = useState(null);
   const [selectedRouteProfile, setselectedRouteProfile] = useState('driving');
+  const [selectedTransportMode, setSelectedTransportMode] = useState('bike'); // 'car', 'bus', 'walking'
   const [routeDirections, setRouteDirections] = useState(null);
   const [loading, setLoading] = useState(true);
   const [distance, setDistance] = useState(null);
   const [duration, setDuration] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [minPrice, setMinPrice] = useState('');
-  const [maxPrice, setMaxPrice] = useState('');
-  const [availability, setAvailability] = useState('all');
-  const [parkingType, setParkingType] = useState('all');
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
-
-  const route = useRoute();
-  const [useSFpark, setUseSFpark] = useState(false);
+  const [routeSteps, setRouteSteps] = useState([]);
   const [showNearbyModal, setShowNearbyModal] = useState(false);
   const [nearbySpots, setNearbySpots] = useState([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
+  const [showSavedSpots, setShowSavedSpots] = useState(false);
+  const [showSearchBar, setShowSearchBar] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
 
-  // Get device location
   async function getPermissionLocation() {
     try {
       Geolocation.getCurrentPosition(
@@ -116,15 +128,17 @@ const HomePage = ({navigation}) => {
   }
   useEffect(() => {
     getPermissionLocation();
-    //console.log(store.longitude);
     if (selectedRouteProfile !== null) {
       createRouterLine(userLocation, selectedRouteProfile);
     }
   }, [selectedRouteProfile]);
-  // Function to find nearby parking spots
+
   const findNearbyParking = async () => {
     if (!userLocation) {
-      Alert.alert('Location Required', 'Please enable location services to find nearby parking.');
+      Alert.alert(
+        'Location Required',
+        'Please enable location services to find nearby parking.',
+      );
       return;
     }
 
@@ -139,8 +153,14 @@ const HomePage = ({navigation}) => {
 
       // Filter spots that have valid coordinates
       const validSpots = allSpots.filter(spot => {
-        const lat = spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude;
-        const lon = spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude;
+        const lat =
+          spot.latitude ||
+          spot.original_data?.location?.latitude ||
+          spot.location?.latitude;
+        const lon =
+          spot.longitude ||
+          spot.original_data?.location?.longitude ||
+          spot.location?.longitude;
         return lat && lon;
       });
 
@@ -154,128 +174,61 @@ const HomePage = ({navigation}) => {
     }
   };
 
-  // Handle book now action
-  const handleBookNow = async (spot) => {
+  async function startCheckout(spot) {
+    try {
+      const currentUser = getCurrentUser();
+      const hourlyRate = spot.pricing_hourly;
+      const amountCents = hourlyRate * 100; // 40 USD cents → $0.40 (for testing)
+
+      const response = await fetch(
+        `https://us-central1-parking-app-1cb84.cloudfunctions.net/createCheckoutSession`,
+        {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            amount: amountCents,
+            spotId: spot.id,
+            userId: currentUser?.uid || null,
+            name: spot.name || 'Parking Spot Booking',
+          }),
+        },
+      );
+
+      const data = await response.json();
+      if (!response.ok || !data.url) {
+        throw new Error(data.error || 'Failed to create checkout session');
+      }
+
+      // Open Stripe Checkout in browser
+      await Linking.openURL(data.url);
+    } catch (err) {
+      console.error('startCheckout error:', err);
+      Alert.alert('Error', err.message || 'Unable to start checkout');
+    }
+  }
+
+  const handleBookNow = spot => {
+    startCheckout(spot);
+  };
+
+  const handleSaveForLater = async spot => {
     const currentUser = getCurrentUser();
     if (!currentUser) {
-      Alert.alert('Login Required', 'Please login to book a parking spot.');
+      Alert.alert('Login Required', 'Please login to save parking spots.');
       return;
     }
-
     try {
-      const result = await bookParkingSpot(spot.id, currentUser.uid);
+      const result = await saveParkingSpotForLater(currentUser.uid, spot);
       if (result.success) {
-        Alert.alert('Success', 'Parking spot booked successfully!');
-        // Refresh nearby spots
-        findNearbyParking();
+        Alert.alert('Success', 'Parking spot saved for later!');
       } else {
-        Alert.alert('Error', result.error || 'Booking failed');
+        Alert.alert('Info', result.error || 'Could not save parking spot');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to book parking spot.');
+      Alert.alert('Error', 'Failed to save parking spot: ' + error.message);
     }
   };
 
-  // Handle save for later action
-  const handleSaveForLater = (spot) => {
-    // TODO: Implement save for later functionality
-    Alert.alert('Saved', 'Parking spot saved for later!');
-    console.log('Saving spot for later:', spot);
-  };
-
-  // const filteredSpots = spots.filter(spot => {
-  //   const matchesSearch =
-  //     !search.trim() ||
-  //     (spot.location &&
-  //       spot.location.toLowerCase().includes(search.toLowerCase()));
-  //   const matchesPrice =
-  //     (!minPrice || spot.price >= parseFloat(minPrice)) &&
-  //     (!maxPrice || spot.price <= parseFloat(maxPrice));
-  //   const matchesAvailability =
-  //     availability === 'all' ||
-  //     (availability === 'available' && spot.is_available) ||
-  //     (availability === 'unavailable' && !spot.is_available);
-  //   const matchesType = parkingType === 'all' || spot.type === parkingType;
-  //   return matchesSearch && matchesPrice && matchesAvailability && matchesType;
-  // });
-
-  const filteredSpots = [
-    {
-      spot_id: 'khi_128',
-      id: 'khi_128',
-
-      name: 'Midway Commercial Parking',
-      type: 'lot',
-
-      // Location
-      latitude: 25.0312,
-      longitude: 67.2823,
-      address: 'Midway Commercial, Bahria Town, Karachi',
-      city: 'Karachi',
-      area: 'Bahria Town',
-
-      // Pricing
-      pricing_currency: 'PKR',
-      pricing_hourly: 40,
-      pricing_daily: 200,
-      pricing_freeFor: null,
-
-      // Availability
-      availability_available: 58,
-      availability_total: 150,
-
-      // Hours
-      hours_open: '08:00',
-      hours_close: '23:00',
-      hours_is24Hours: false,
-
-      // Amenities
-      amenities: ['security'],
-
-      // Restrictions
-      restrictions: [],
-
-      // Rating
-      rating: 3.8,
-      reviewCount: 103,
-
-      isActive: true,
-
-      created_at: '2025-11-18T19:22:35Z',
-      updated_at: '2025-11-18T19:22:35Z',
-
-      // Full structured object (optional)
-      original_data: {
-        location: {
-          name: 'Midway Commercial Parking',
-          address: 'Midway Commercial, Bahria Town, Karachi',
-          latitude: 25.0312,
-          longitude: 67.2823,
-        },
-        availability: {
-          available: 58,
-          total: 150,
-        },
-        pricing: {
-          currency: 'PKR',
-          hourly: 40,
-          daily: 200,
-          freeFor: null,
-        },
-        hours: {
-          open: '08:00',
-          close: '23:00',
-          is24Hours: false,
-        },
-        amenities: ['security'],
-        restrictions: [],
-        rating: 3.8,
-        reviewCount: 103,
-      },
-    },
-  ];
-
-  // Geocode address to coordinates (using Mapbox API)
   const geocodeAddress = async address => {
     try {
       // Use LocationIQ forward geocoding (search) to get coordinates
@@ -331,8 +284,6 @@ const HomePage = ({navigation}) => {
   }
 
   async function createRouterLine(coords, routeProfile) {
-    console.log(coords, 'coords');
-
     const startCoords = `${coords.longitude},${coords.latitude}`;
 
     const endCoords = `${['67.03005', '24.80234']}`;
@@ -342,23 +293,31 @@ const HomePage = ({navigation}) => {
     try {
       let response = await fetch(url);
       let json = await response.json();
-      console.log(json, 'agdfjahg');
 
       const data = json?.routes.map(data => {
-        setDistance((data.distance / 1000).toFixed(2));
-        setDuration((data.duration / 3600).toFixed(2));
+        setDistance((data.distance / 1000).toFixed(1));
+        // Convert duration from seconds to hours and minutes
+        const totalSeconds = data.duration;
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        if (hours > 0) {
+          setDuration(`${hours}H ${minutes} MIN`);
+        } else {
+          setDuration(`${minutes} MIN`);
+        }
       });
 
       let coordinates = json['routes'][0]['geometry']['coordinates'];
       let destinationCoordinates =
         json['routes'][0]['geometry']['coordinates'].slice(-1)[0];
       let steps = json.routes[0].legs[0].steps;
+      console.log(destinationCoordinates, 'destinationCoordinates');
+
       setCurrentStep(steps);
+      setRouteSteps(steps);
       setDestinationCoords(destinationCoordinates);
       if (coordinates.length) {
         const routerFeature = makeRouterFeature([...coordinates]);
-        console.log(routerFeature, 'routerFeature');
-
         setRouteDirections(routerFeature);
       }
       setLoading(false);
@@ -488,8 +447,9 @@ const HomePage = ({navigation}) => {
 
     // Move camera to follow user
     cameraRef.current?.setCamera({
-      centerCoordinate: [userLng, userLat],
-      zoomLevel: 16,
+      centerCoordinate: isNavigating && [userLng, userLat],
+      zoomLevel: isNavigating ? 16 : 14,
+      pitch: isNavigating ? 70 : 0,
       animationMode: 'flyTo',
       animationDuration: 1000,
     });
@@ -528,143 +488,142 @@ const HomePage = ({navigation}) => {
     return R * c; // meters
   }
 
-  const renderItem = ({item}) => (
-    <TouchableOpacity
-      style={[
-        styles.routeProfileButton,
-        item.id == selectedRouteProfile && styles.selectedRouteProfileButton,
-      ]}
-      onPress={() => setselectedRouteProfile(item.id)}>
-      <Icon
-        name={item.icon}
-        size={24}
-        color={
-          item.id == selectedRouteProfile ? 'white' : 'rgba(255,255,255,0.6)'
-        }
-      />
-      <Text
-        style={[
-          styles.routeProfileButtonText,
-          item.id == selectedRouteProfile &&
-            styles.selectedRouteProfileButtonText,
-        ]}>
-        {item.label}
-      </Text>
-    </TouchableOpacity>
-  );
   return (
     <View style={styles.container}>
-      <View style={styles.actionsRow}>
+      {/* Top Header with Search and Menu Icons */}
+      <View style={styles.topHeader}>
         <TouchableOpacity
-          style={styles.editBtn}
-          onPress={() => navigation.navigate('UserProfileEdit')}>
-          <Text style={styles.actionsText}>Edit Profile</Text>
+          style={styles.iconButton}
+          onPress={() => {
+            setShowSearchBar(!showSearchBar);
+            setShowDropdown(false);
+          }}>
+          <Image
+            source={require('../assets/search.png')}
+            style={styles.iconButtonImage}
+          />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-          <Text style={styles.actionsText}>Log Out</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.topBar}>
-        <TextInput
-          style={styles.searchBar}
-          placeholder="Search by address or location..."
-          placeholderTextColor="#999"
-          value={search}
-          onChangeText={text => {
-            setSearch(text);
-            fetchSuggestions(text);
-          }}
-          onFocus={() => {
-            if (suggestions.length > 0) setShowSuggestions(true);
-          }}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-          returnKeyType="search"
-        />
-        
-        {/* Find Parking Near Me Button */}
         <TouchableOpacity
-          style={styles.findNearbyButton}
+          style={!loadingNearby ? styles.findNearbyButton : {}}
           onPress={findNearbyParking}
           disabled={loadingNearby || !userLocation}>
           {loadingNearby ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color="#999" />
           ) : (
             <Text style={styles.findNearbyButtonText}>
               🚗 Find Parking Near Me
             </Text>
           )}
         </TouchableOpacity>
-        {/* Suggestions dropdown */}
-        {showSuggestions && suggestions.length > 0 && (
-          <View style={styles.suggestionsDropdown}>
-            {suggestions.map(item => (
-              <TouchableOpacity
-                key={item.id}
-                style={styles.suggestionItem}
-                onPress={() => handleSuggestionPress(item)}>
-                <Text numberOfLines={2}>
-                  {item.place_name ||
-                    (item.raw && item.raw.display_name) ||
-                    'Unknown'}
-                </Text>
-                {item.raw && item.raw.address && item.raw.address.country && (
-                  <Text style={{fontSize: 12, color: '#666'}}>
-                    {item.raw.address.country}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* Filter Controls */}
-        <View style={styles.filterRow}>
-          <TextInput
-            style={styles.filterInput}
-            placeholder="Min Price"
-            placeholderTextColor="#999"
-            value={minPrice}
-            onChangeText={setMinPrice}
-            keyboardType="numeric"
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={() => {
+            setShowDropdown(!showDropdown);
+            setShowSearchBar(false);
+          }}>
+          <Image
+            source={require('../assets/menu.png')}
+            style={styles.iconButtonImage}
           />
-          <TextInput
-            style={styles.filterInput}
-            placeholder="Max Price"
-            placeholderTextColor="#999"
-            value={maxPrice}
-            onChangeText={setMaxPrice}
-            keyboardType="numeric"
-          />
-          <View style={styles.pickerWrapper}>
-            <Picker
-              selectedValue={availability}
-              style={styles.filterPicker}
-              onValueChange={setAvailability}>
-              <Picker.Item label="All" value="all" />
-              <Picker.Item label="Available" value="available" />
-              <Picker.Item label="Unavailable" value="unavailable" />
-            </Picker>
-          </View>
-          <View style={styles.pickerWrapper}>
-            <Picker
-              selectedValue={parkingType}
-              style={styles.filterPicker}
-              onValueChange={setParkingType}>
-              <Picker.Item label="All Types" value="all" />
-              <Picker.Item label="Street" value="street" />
-              <Picker.Item label="Garage" value="garage" />
-            </Picker>
-          </View>
-        </View>
+        </TouchableOpacity>
       </View>
 
-      {showSuggestions && suggestions.length > 0 && (
+      {/* Dropdown Menu */}
+      {showDropdown && (
+        <View style={styles.dropdownMenu}>
+          <TouchableOpacity
+            style={styles.dropdownItem}
+            onPress={() => {
+              setShowDropdown(false);
+              navigation.navigate('UserProfileEdit');
+            }}>
+            <Image
+              source={require('../assets/person.png')}
+              style={styles.dropdownIcon}
+            />
+            <Text style={styles.dropdownText}>Edit Profile</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.dropdownItem}
+            onPress={() => {
+              setShowDropdown(false);
+              setShowSavedSpots(true);
+            }}>
+            <Image
+              source={require('../assets/bookmark.png')}
+              style={styles.dropdownIcon}
+            />
+            <Text style={styles.dropdownText}>Saved Spots</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.dropdownItem}
+            onPress={() => {
+              setShowDropdown(false);
+              // TODO: Navigate to history screen when implemented
+              Alert.alert('History', 'History feature coming soon!');
+            }}>
+            <Image
+              source={require('../assets/time.png')}
+              style={styles.dropdownIcon}
+            />
+            <Text style={styles.dropdownText}>History</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dropdownItem, styles.dropdownItemLast]}
+            onPress={() => {
+              setShowDropdown(false);
+              handleLogout();
+            }}>
+            <Image
+              source={require('../assets/arrow.png')}
+              style={styles.dropdownIcon}
+            />
+            <Text style={[styles.dropdownText, styles.logoutText]}>Logout</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Search Bar - Shown when search icon is clicked */}
+      {showSearchBar && (
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchBar}
+            placeholder="Search by address or location..."
+            placeholderTextColor="#999"
+            value={search}
+            onChangeText={text => {
+              setSearch(text);
+              fetchSuggestions(text);
+            }}
+            onFocus={() => {
+              if (suggestions.length > 0) setShowSuggestions(true);
+            }}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            returnKeyType="search"
+            autoFocus={true}
+          />
+          <TouchableOpacity
+            style={styles.closeSearchButton}
+            onPress={() => setShowSearchBar(false)}>
+            <Image
+              source={require('../assets/close.png')}
+              style={styles.iconButtonImage}
+            />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Suggestions dropdown - shown when search bar is visible */}
+      {showSearchBar && showSuggestions && suggestions.length > 0 && (
         <View style={styles.suggestionsDropdown}>
           {suggestions.map(item => (
             <TouchableOpacity
               key={item.id}
               style={styles.suggestionItem}
-              onPress={() => handleSuggestionPress(item)}>
+              onPress={() => {
+                handleSuggestionPress(item);
+                setShowSearchBar(false);
+              }}>
               <Text numberOfLines={2}>
                 {item.place_name ||
                   (item.raw && item.raw.display_name) ||
@@ -697,7 +656,10 @@ const HomePage = ({navigation}) => {
         <View style={styles.navInstructionWrap} pointerEvents="box-none">
           <View style={styles.navInstructionInner}>
             <View style={styles.navIconContainer}>
-              <Ionicons name="navigate" size={22} color="#fff" />
+              <Image
+              source={require('../assets/navigate.png')}
+              style={styles.navigateIcon}
+            />
             </View>
             <View style={styles.navTextContainer}>
               <Text numberOfLines={2} style={styles.navInstructionText}>
@@ -719,7 +681,10 @@ const HomePage = ({navigation}) => {
             <TouchableOpacity
               style={styles.navCloseBtn}
               onPress={() => setIsNavigating(false)}>
-              <Ionicons name="close" size={18} color="#fff" />
+              <Image
+                source={require('../assets/close.png')}
+                style={styles.navigateIcon}
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -734,7 +699,7 @@ const HomePage = ({navigation}) => {
           await createRouterLine(userLocation, selectedRouteProfile);
         }}>
         <MapboxGL.Camera
-          // ref={cameraRef}
+          ref={cameraRef}
           zoomLevel={zoom}
           centerCoordinate={cameraCenter}
           animationMode="flyTo"
@@ -755,11 +720,13 @@ const HomePage = ({navigation}) => {
 
         {destinationCoords && (
           <MapboxGL.PointAnnotation
-            id="user-location"
-            coordinate={destinationCoords}>
+            id="parking-location"
+            coordinate={[destinationCoords[0], destinationCoords[1]]}>
             <View style={styles.destinationIcon}>
-              {/* <Ionicons name="storefront" size={24} color="#e1310a" /> */}
-              <Icon name="parking" size={30} color="#900" />
+              <Image
+                source={require('../assets/parking.png')}
+                style={styles.parking}
+              />
             </View>
           </MapboxGL.PointAnnotation>
         )}
@@ -768,57 +735,71 @@ const HomePage = ({navigation}) => {
           androidRenderMode={'gps'}
           showsUserHeadingIndicator={true}
           onUpdate={loc => {
-            if (isNavigating) handleNavigationUpdate(loc);
+            handleNavigationUpdate(loc);
           }}
         />
 
         {/* Show parking spots */}
       </MapboxGL.MapView>
-      {filteredSpots.length === 0 && (
-        <View style={styles.noResults}>
-          <Text>No parking spots found.</Text>
+      {routeDirections && distance && duration && (
+        <View style={styles.bottomRouteCard}>
+          {/* Left Section - Route Path */}
+          <View style={styles.routePathSection}>
+            <TouchableOpacity
+              style={styles.startBtn}
+              onPress={() => startNavigation()}>
+              <Text style={styles.startBtnText}>
+                {' '}
+                {isNavigating ? 'Stop' : '▲ START'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Time */}
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>TAKE TIME</Text>
+              <Text style={styles.infoValue}>{duration}</Text>
+            </View>
+          </View>
+
+          <View style={styles.routeInfoSection}>
+            <View style={styles.transportModes}>
+              {routeProfiles.map(profile => {
+                const isSelected =
+                  selectedTransportMode === profile.transportKey;
+
+                return (
+                  <TouchableOpacity
+                    key={profile.id}
+                    style={[
+                      styles.transportModeIcon,
+                      isSelected && styles.transportModeIconSelected,
+                      {marginRight: 8},
+                    ]}
+                    onPress={() => {
+                      setSelectedTransportMode(profile.transportKey);
+                      setselectedRouteProfile(profile.mapboxProfile);
+                    }}>
+                    <Image
+                      source={profile.icon}
+                      style={[
+                        styles.transportIconImage,
+                        isSelected && styles.transportIconImageSelected,
+                      ]}
+                      resizeMode="contain"
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Distance */}
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>DISTANCE</Text>
+              <Text style={styles.infoValue}>{distance} KM</Text>
+            </View>
+          </View>
         </View>
       )}
-      {routeDirections && (
-        <View style={styles.cardContainer}>
-          <ColorfulCard
-            title={`Dollmen Shopping Center`}
-            value={`${duration} h`}
-            footerTitle="Distance"
-            footerValue={`${distance} km`}
-            iconImageSource={require('../assets/info.png')}
-            style={{backgroundColor: '#33495F'}}
-            onPress={() => {}}
-          />
-        </View>
-      )}
-      <FlatList
-        data={routeProfiles}
-        renderItem={renderItem}
-        keyExtractor={item => item.id}
-        horizontal
-        contentContainerStyle={styles.routeProfileList}
-        showsHorizontalScrollIndicator={false}
-        style={styles.flatList}
-      />
-      <TouchableOpacity
-        style={[
-          styles.startNavButton,
-          isNavigating && styles.startNavButtonActive,
-        ]}
-        onPress={() => startNavigation()}>
-        <View style={styles.startNavButtonInner}>
-          <Ionicons
-            name={isNavigating ? 'play-skip-forward' : 'car'}
-            size={18}
-            color="#fff"
-            style={{marginRight: 10}}
-          />
-          <Text style={styles.startNavButtonText}>
-            {isNavigating ? 'Stop Navigation' : 'Start Navigation'}
-          </Text>
-        </View>
-      </TouchableOpacity>
 
       {/* Nearby Parking Modal */}
       <NearbyParkingModal
@@ -828,6 +809,13 @@ const HomePage = ({navigation}) => {
         userLocation={userLocation}
         onBookNow={handleBookNow}
         onSaveForLater={handleSaveForLater}
+      />
+
+      {/* Saved Parking Spots Modal */}
+      <SavedParkingSpots
+        visible={showSavedSpots}
+        onClose={() => setShowSavedSpots(false)}
+        onBookNow={handleBookNow}
       />
     </View>
   );
@@ -876,13 +864,13 @@ const styles = StyleSheet.create({
   },
   suggestionsDropdown: {
     position: 'absolute',
-    top: 128,
+    top: 200,
     left: 16,
     right: 16,
     backgroundColor: '#fff',
     borderRadius: 8,
-    zIndex: 9999,
-    maxHeight: 'auto',
+    zIndex: 97,
+    maxHeight: 300,
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 2},
@@ -999,6 +987,113 @@ const styles = StyleSheet.create({
     zIndex: 5,
     elevation: 2,
   },
+  // Top Header Styles
+  topHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    zIndex: 100,
+  },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 22,
+    padding: 10,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  iconButtonImage: {
+    width: '100%',
+    height: '100%',
+  },
+  // Dropdown Menu Styles
+  dropdownMenu: {
+    position: 'absolute',
+    top: 50,
+    right: 16,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 8,
+    minWidth: 200,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    zIndex: 999,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  dropdownItemLast: {
+    borderBottomWidth: 0,
+  },
+  dropdownIcon: {
+    marginRight: 12,
+    width: 20,
+    height: 20,
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '500',
+  },
+  logoutText: {
+    color: '#F44336',
+  },
+  // Search Container Styles
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    zIndex: 98,
+  },
+  closeSearchButton: {
+    width: 34,
+    height: 34,
+    marginLeft: 8,
+    borderRadius: 22,
+    padding: 8,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  // Action Buttons Container
+  actionButtonsContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
   topBar: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -1041,13 +1136,13 @@ const styles = StyleSheet.create({
     height: 50,
   },
   searchBar: {
+    flex: 1,
     backgroundColor: '#f9f9f9',
     borderColor: '#ccc',
     borderWidth: 1,
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
-    marginBottom: 12,
   },
   findNearbyButton: {
     backgroundColor: '#007AFF',
@@ -1058,6 +1153,19 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   findNearbyButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  savedSpotsButton: {
+    backgroundColor: '#FFA500',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  savedSpotsButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
@@ -1126,7 +1234,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   navInstructionInner: {
-    backgroundColor: '#111827',
+    backgroundColor: '#0A84FF',
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
@@ -1143,6 +1251,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+  },
+  navigateIcon: {
+    width: 24,
+    height: 24,
+    tintColor: '#fff',
   },
   navTextContainer: {
     flex: 1,
@@ -1168,6 +1281,196 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 12,
     backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  parking: {
+    width: 30,
+    height: 30,
+    resizeMode: 'contain',
+  },
+  routeProfileButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 40,
+    marginHorizontal: 8,
+    borderColor: '#fff',
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+
+  selectedRouteProfileButton: {
+    backgroundColor: '#fff',
+    borderColor: '#fff',
+  },
+
+  routeProfileButtonText: {
+    color: '#fff',
+    marginTop: 5,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  selectedRouteProfileButtonText: {
+    color: '#000',
+  },
+  // Bottom Route Card Styles
+  bottomRouteCard: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    flexDirection: 'row',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: -4},
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    zIndex: 999,
+  },
+  routePathSection: {
+    flex: 1,
+    paddingRight: 16,
+  },
+  locationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  targetIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  locationText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.5,
+  },
+  routeLineContainer: {
+    position: 'relative',
+    marginLeft: 10,
+    marginVertical: 8,
+    minHeight: 80,
+  },
+  dashedLineContainer: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 2,
+    flexDirection: 'column',
+  },
+  dashSegment: {
+    width: 2,
+    height: 6,
+    backgroundColor: '#FF69B4',
+    marginBottom: 4,
+  },
+  waypointsContainer: {
+    paddingLeft: 20,
+    paddingTop: 4,
+  },
+  waypointItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  waypointDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF69B4',
+    marginRight: 8,
+  },
+  waypointText: {
+    fontSize: 12,
+    color: '#333',
+    flex: 1,
+  },
+  locationFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  routeInfoSection: {
+    flex: 1,
+    paddingLeft: 16,
+    borderLeftWidth: 1,
+    borderLeftColor: '#e0e0e0',
+  },
+  transportModes: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  transportModeIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  transportModeIconSelected: {
+    borderColor: '#007AFF',
+    backgroundColor: '#fff',
+  },
+  transportIconImage: {
+    width: 24,
+    height: 24,
+    tintColor: '#000',
+  },
+  transportIconImageSelected: {
+    tintColor: '#007AFF',
+  },
+  infoRow: {
+    marginBottom: 12,
+  },
+  infoLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#000',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  infoValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
+  startBtn: {
+    // flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0A84FF',
+    width: 'fitContent',
+    paddingVertical: 10,
+    // paddingHorizontal: 24,
+    borderRadius: 30,
+    // alignSelf: 'center',
+    // elevation: 4,
+    // shadowColor: '#000',
+    // shadowOpacity: 0.2,
+    // shadowRadius: 4,
+    marginBottom: 16,
+    // shadowOffset: {width: 0, height: 2},
+  },
+
+  startBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
 });
 

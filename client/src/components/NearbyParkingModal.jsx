@@ -376,6 +376,7 @@ const styles = StyleSheet.create({
   filterGroup: {
     marginRight: 12,
     minWidth: 120,
+    marginBottom: 20,
   },
   filterLabel: {
     fontSize: 12,
@@ -393,10 +394,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ccc',
     borderRadius: 8,
-    padding: 8,
+    padding: 10,
     fontSize: 14,
     backgroundColor: '#f9f9f9',
     minWidth: 60,
+    height: 55,
+
   },
   priceSeparator: {
     fontSize: 16,
@@ -410,7 +413,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   picker: {
-    height: 40,
+    height: 50,
     width: 120,
   },
   listContent: {

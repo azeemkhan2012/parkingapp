@@ -1,4 +1,5 @@
 import React, {useEffect, useState, useRef} from 'react';
+import {useRoute} from '@react-navigation/native';
 import {
   View,
   TextInput,
@@ -18,12 +19,17 @@ import {
   getCurrentUser,
   signOut,
   saveParkingSpotForLater,
+  deleteFCMToken as deleteFCMTokenFromFirestore,
+  saveFCMToken,
 } from '../config/firebase';
+import {deleteFCMToken as deleteLocalFCMToken, initializeFCM} from '../utils/notifications';
 import {collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
 import NearbyParkingModal from './NearbyParkingModal';
 import {useStripe} from '@stripe/stripe-react-native';
 import SavedParkingSpots from './SavedParkingSpots';
+import NotificationInbox from './NotificationInbox';
+import {getNotifications, getUnreadCount} from '../config/firebase';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -81,6 +87,7 @@ const APIKEY =
   'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg';
 
 const HomePage = ({navigation}) => {
+  const route = useRoute();
   const [search, setSearch] = useState('');
   const [destinationCoords, setDestinationCoords] = useState([24.8021, 67.03]);
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
@@ -101,6 +108,9 @@ const HomePage = ({navigation}) => {
   const [loadingNearby, setLoadingNearby] = useState(false);
   const [savingSpot, setSavingSpot] = useState(false);
   const [showSavedSpots, setShowSavedSpots] = useState(false);
+  const [savedSpotToOpen, setSavedSpotToOpen] = useState(null);
+  const [showNotificationInbox, setShowNotificationInbox] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
 
@@ -133,6 +143,58 @@ const HomePage = ({navigation}) => {
       createRouterLine(userLocation, selectedRouteProfile);
     }
   }, [selectedRouteProfile]);
+
+  // Initialize FCM if user is already logged in (app restart scenario)
+  useEffect(() => {
+    const initializeFCMIfLoggedIn = async () => {
+      const currentUser = getCurrentUser();
+      if (currentUser) {
+        try {
+          const fcmToken = await initializeFCM();
+          if (fcmToken) {
+            await saveFCMToken(currentUser.uid, fcmToken);
+            console.log('FCM token initialized for logged-in user');
+          }
+        } catch (fcmError) {
+          console.error('Error initializing FCM on app start:', fcmError);
+        }
+      }
+    };
+
+    initializeFCMIfLoggedIn();
+  }, []);
+
+  // Load unread notification count
+  useEffect(() => {
+    const loadUnreadCount = async () => {
+      const currentUser = getCurrentUser();
+      if (currentUser) {
+        try {
+          const count = await getUnreadCount(currentUser.uid);
+          setUnreadCount(count);
+        } catch (error) {
+          console.error('Error loading unread count:', error);
+        }
+      }
+    };
+
+    loadUnreadCount();
+    // Refresh unread count every 30 seconds
+    const interval = setInterval(loadUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Handle navigation from notifications
+  useEffect(() => {
+    const params = route.params;
+    if (params?.openSavedSpot && params?.savedSpotId) {
+      // Open saved spots modal and select the specific spot
+      setShowSavedSpots(true);
+      setSavedSpotToOpen(params.savedSpotId);
+      // Clear params to avoid reopening on subsequent navigations
+      navigation.setParams({openSavedSpot: undefined, savedSpotId: undefined});
+    }
+  }, [route.params, navigation]);
 
   const findNearbyParking = async () => {
     if (!userLocation) {
@@ -458,6 +520,20 @@ const HomePage = ({navigation}) => {
 
   const handleLogout = async () => {
     try {
+      const currentUser = getCurrentUser();
+      
+      // Delete FCM token before logout
+      if (currentUser) {
+        try {
+          await deleteFCMTokenFromFirestore(currentUser.uid);
+          await deleteLocalFCMToken();
+          console.log('FCM token deleted on logout');
+        } catch (fcmError) {
+          console.error('Error deleting FCM token:', fcmError);
+          // Don't block logout if FCM deletion fails
+        }
+      }
+
       await signOut();
       Alert.alert('Signed out', 'You have been logged out.');
       // send user to the login screen and clear history
@@ -543,11 +619,40 @@ const HomePage = ({navigation}) => {
             </Text>
           )}
         </TouchableOpacity>
+        <View style={styles.iconButtonContainer}>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={async () => {
+              setShowNotificationInbox(true);
+              setShowDropdown(false);
+              setShowSearchBar(false);
+              // Refresh unread count when opening inbox
+              const currentUser = getCurrentUser();
+              if (currentUser) {
+                try {
+                  const count = await getUnreadCount(currentUser.uid);
+                  setUnreadCount(count);
+                } catch (error) {
+                  console.error('Error refreshing unread count:', error);
+                }
+              }
+            }}>
+            <Text style={styles.bellIcon}>🔔</Text>
+            {unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
           style={styles.iconButton}
           onPress={() => {
             setShowDropdown(!showDropdown);
             setShowSearchBar(false);
+            setShowNotificationInbox(false);
           }}>
           <Image
             source={require('../assets/menu.png')}
@@ -842,8 +947,51 @@ const HomePage = ({navigation}) => {
       {/* Saved Parking Spots Modal */}
       <SavedParkingSpots
         visible={showSavedSpots}
-        onClose={() => setShowSavedSpots(false)}
+        onClose={() => {
+          setShowSavedSpots(false);
+          setSavedSpotToOpen(null);
+        }}
         onBookNow={handleBookNow}
+        spotToOpen={savedSpotToOpen}
+      />
+
+      {/* Notification Inbox Modal */}
+      <NotificationInbox
+        visible={showNotificationInbox}
+        onClose={async () => {
+          setShowNotificationInbox(false);
+          // Reload unread count when closing
+          const currentUser = getCurrentUser();
+          if (currentUser) {
+            try {
+              const count = await getUnreadCount(currentUser.uid);
+              setUnreadCount(count);
+              console.log('Unread count refreshed:', count);
+            } catch (error) {
+              console.error('Error refreshing unread count:', error);
+            }
+          }
+        }}
+        onReadChange={async () => {
+          // Refresh unread count when notification is marked as read
+          const currentUser = getCurrentUser();
+          if (currentUser) {
+            try {
+              const count = await getUnreadCount(currentUser.uid);
+              setUnreadCount(count);
+              console.log('Unread count updated after read:', count);
+            } catch (error) {
+              console.error('Error refreshing unread count:', error);
+            }
+          }
+        }}
+        onNotificationTap={notification => {
+          // Navigate to saved spot when notification is tapped
+          if (notification.saved_spot_id) {
+            setShowSavedSpots(true);
+            setSavedSpotToOpen(notification.saved_spot_id);
+          }
+        }}
       />
     </View>
   );
@@ -1041,6 +1189,31 @@ const styles = StyleSheet.create({
     shadowOffset: {width: 0, height: 1},
     shadowOpacity: 0.1,
     shadowRadius: 2,
+  },
+  iconButtonContainer: {
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  bellIcon: {
+    fontSize: 22,
   },
   iconButtonImage: {
     width: '100%',

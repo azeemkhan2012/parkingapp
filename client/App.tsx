@@ -5,7 +5,7 @@
  * @format
  */
 
-import React, {useEffect} from 'react';
+import React, {useEffect, useRef} from 'react';
 import 'react-native-gesture-handler';
 import LoginScreen from './src/components/loginScreen';
 import SignUpScreen from './src/components/signUpScreen';
@@ -18,7 +18,9 @@ import {NavigationContainer} from '@react-navigation/native';
 import HomePage from './src/components/homePage';
 import {StripeProvider} from '@stripe/stripe-react-native';
 import {Alert, Linking} from 'react-native';
-import {bookParkingSpot, getCurrentUser} from './src/config/firebase';
+import {bookParkingSpot, getCurrentUser, saveFCMToken} from './src/config/firebase';
+import {setupNotificationListeners, getFCMToken} from './src/utils/notifications';
+import messaging from '@react-native-firebase/messaging';
 // import {NavigationContainer} from './node_modules/@react-navigation/native/lib/typescript/src';
 // import {createNativeStackNavigator} from './node_modules/@react-navigation/native-stack/lib/typescript/src';
 
@@ -31,6 +33,8 @@ import {bookParkingSpot, getCurrentUser} from './src/config/firebase';
 const Stack = createNativeStackNavigator();
 
 function App(): React.JSX.Element {
+  const navigationRef = useRef<any>(null);
+
   useEffect(() => {
     const handleUrl = async (event: any) => {
       const url = event.url;
@@ -51,6 +55,36 @@ function App(): React.JSX.Element {
 
     const subscription = Linking.addEventListener('url', handleUrl);
     return () => subscription.remove();
+  }, []);
+
+  // Setup notification listeners
+  useEffect(() => {
+    // Get navigation instance when available
+    const getNavigation = () => {
+      return navigationRef.current;
+    };
+
+    // Setup notification listeners
+    const unsubscribeForeground = setupNotificationListeners(getNavigation);
+
+    // Handle FCM token refresh
+    const unsubscribeTokenRefresh = messaging().onTokenRefresh(async token => {
+      console.log('FCM token refreshed:', token);
+      const currentUser = getCurrentUser();
+      if (currentUser) {
+        try {
+          await saveFCMToken(currentUser.uid, token);
+          console.log('Refreshed FCM token saved');
+        } catch (error) {
+          console.error('Error saving refreshed token:', error);
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeForeground();
+      unsubscribeTokenRefresh();
+    };
   }, []);
 
   async function handleCheckoutSuccess(sessionId: string) {
@@ -100,7 +134,7 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <StripeProvider publishableKey="pk_test_51SXKstC1HeXH2oUQuSjQMoH7zT0olUUFg0dQeZshuhyfgwc9TFi5VYyT59GJZXwAotVWnORfoa3QqYU2bEtr4A2T00ecmUBySG">
         <Stack.Navigator screenOptions={{headerShown: false}}>
           <Stack.Screen name="login" component={LoginScreen} />

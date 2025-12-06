@@ -28,7 +28,9 @@ import {
   deleteDoc,
   serverTimestamp,
   writeBatch,
-  runTransaction
+  runTransaction,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 
 // Initialize Firebase
@@ -561,6 +563,179 @@ export const deleteSavedParkingSpot = async (savedSpotId) => {
   }
 };
 
+// -------------------- FCM Token Management --------------------
+export const saveFCMToken = async (userId, fcmToken) => {
+  try {
+    const tokenRef = doc(db, 'user_tokens', userId);
+    await setDoc(
+      tokenRef,
+      {
+        user_id: userId,
+        fcm_token: fcmToken,
+        platform: 'android',
+        updated_at: serverTimestamp(),
+      },
+      {merge: true},
+    );
+    return {success: true};
+  } catch (error) {
+    console.error('Error saving FCM token:', error);
+    return {success: false, error: error.message};
+  }
+};
+
+export const getFCMToken = async userId => {
+  try {
+    const tokenRef = doc(db, 'user_tokens', userId);
+    const tokenSnap = await getDoc(tokenRef);
+    if (tokenSnap.exists()) {
+      return {success: true, token: tokenSnap.data().fcm_token};
+    }
+    return {success: false, error: 'Token not found'};
+  } catch (error) {
+    console.error('Error getting FCM token:', error);
+    return {success: false, error: error.message};
+  }
+};
+
+export const deleteFCMToken = async userId => {
+  try {
+    const tokenRef = doc(db, 'user_tokens', userId);
+    await deleteDoc(tokenRef);
+    return {success: true};
+  } catch (error) {
+    console.error('Error deleting FCM token:', error);
+    return {success: false, error: error.message};
+  }
+};
+
+// -------------------- Notifications --------------------
+/**
+ * Get notifications for a user (last 10)
+ */
+export const getNotifications = async userId => {
+  try {
+    console.log('[getNotifications] Fetching notifications for user:', userId);
+    
+    // Try to query with orderBy first (requires index)
+    let snapshot;
+    try {
+      const q = query(
+        collection(db, 'notifications'),
+        where('user_id', '==', userId),
+        orderBy('created_at', 'desc'),
+        limit(10),
+      );
+      snapshot = await getDocs(q);
+    } catch (indexError) {
+      // If index doesn't exist, fallback to query without orderBy
+      console.warn('[getNotifications] Index may not exist, using fallback query:', indexError.code);
+      const fallbackQ = query(
+        collection(db, 'notifications'),
+        where('user_id', '==', userId),
+      );
+      snapshot = await getDocs(fallbackQ);
+    }
+    
+    let notifications = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+    
+    // Sort manually by created_at (descending) - handles both Firestore Timestamp and fallback
+    if (notifications.length > 0) {
+      notifications.sort((a, b) => {
+        const aTime = a.created_at?.toMillis?.() || 
+                     a.created_at?.seconds * 1000 || 
+                     a.created_at?._seconds * 1000 ||
+                     (a.created_at ? new Date(a.created_at).getTime() : 0) ||
+                     0;
+        const bTime = b.created_at?.toMillis?.() || 
+                     b.created_at?.seconds * 1000 || 
+                     b.created_at?._seconds * 1000 ||
+                     (b.created_at ? new Date(b.created_at).getTime() : 0) ||
+                     0;
+        return bTime - aTime; // Descending order (newest first)
+      });
+    }
+    
+    // Limit to 10 after sorting
+    notifications = notifications.slice(0, 10);
+    
+    console.log('[getNotifications] Found notifications:', notifications.length);
+    return notifications;
+  } catch (error) {
+    console.error('[getNotifications] Error getting notifications:', error);
+    console.error('[getNotifications] Error code:', error.code);
+    console.error('[getNotifications] Error message:', error.message);
+    
+    // If it's still an index error even after fallback, provide helpful message
+    if (error.code === 'failed-precondition') {
+      // Try once more with just the user_id filter
+      try {
+        console.log('[getNotifications] Trying simplest query...');
+        const simpleQ = query(
+          collection(db, 'notifications'),
+          where('user_id', '==', userId),
+        );
+        const simpleSnapshot = await getDocs(simpleQ);
+        let notifications = simpleSnapshot.docs.map(d => ({id: d.id, ...d.data()}));
+        
+        // Sort manually
+        notifications.sort((a, b) => {
+          const aTime = a.created_at?.toMillis?.() || 
+                       a.created_at?.seconds * 1000 || 
+                       (a.created_at ? new Date(a.created_at).getTime() : 0) || 0;
+          const bTime = b.created_at?.toMillis?.() || 
+                       b.created_at?.seconds * 1000 || 
+                       (b.created_at ? new Date(b.created_at).getTime() : 0) || 0;
+          return bTime - aTime;
+        });
+        
+        return notifications.slice(0, 10);
+      } catch (fallbackError) {
+        console.error('[getNotifications] Fallback also failed:', fallbackError);
+        throw new Error(
+          'Failed to load notifications. Please create a Firestore index: notifications collection with user_id (Ascending) and created_at (Descending). Check Firebase Console for the index creation link.'
+        );
+      }
+    }
+    
+    throw error;
+  }
+};
+
+/**
+ * Mark a notification as read
+ */
+export const markNotificationAsRead = async notificationId => {
+  try {
+    const notificationRef = doc(db, 'notifications', notificationId);
+    await updateDoc(notificationRef, {
+      read: true,
+    });
+    return {success: true};
+  } catch (error) {
+    console.error('Error marking notification as read:', error);
+    return {success: false, error: error.message};
+  }
+};
+
+/**
+ * Get unread notification count for a user
+ */
+export const getUnreadCount = async userId => {
+  try {
+    const q = query(
+      collection(db, 'notifications'),
+      where('user_id', '==', userId),
+      where('read', '==', false),
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.size;
+  } catch (error) {
+    console.error('Error getting unread count:', error);
+    return 0;
+  }
+};
+
 export default {
   auth,
   db,
@@ -577,6 +752,10 @@ export default {
   getSavedParkingSpots,
   removeSavedParkingSpot,
   deleteSavedParkingSpot,
+  // FCM Token Management
+  saveFCMToken,
+  getFCMToken,
+  deleteFCMToken,
   // extras
   isUsernameAvailable,
   reserveUsername,

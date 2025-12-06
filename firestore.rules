@@ -63,6 +63,31 @@ service cloud.firestore {
       // Allow update/delete if user is authenticated and owns the document
       allow update, delete: if isAuthenticated() && isSavedSpotOwner();
     }
+    
+    // User tokens collection - users can read/write their own FCM tokens
+    match /user_tokens/{userId} {
+      // Allow read if user is authenticated and owns the token
+      allow read: if isAuthenticated() && (resource == null || request.auth.uid == userId);
+      
+      // Allow create/update if user is authenticated and setting their own token
+      allow create, update: if isAuthenticated() && request.auth.uid == userId && request.auth.uid == request.resource.data.user_id;
+      
+      // Allow delete if user is authenticated and owns the token
+      allow delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Notifications collection - users can read/update their own notifications
+    // Cloud Functions can write notifications
+    match /notifications/{notificationId} {
+      // Allow read if user is authenticated and owns the notification
+      allow read: if isAuthenticated() && (resource == null || request.auth.uid == resource.data.user_id);
+      
+      // Allow update if user is authenticated and owns the notification (for marking as read)
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.user_id;
+      
+      // Cloud Functions can create notifications (no auth check needed for server-side)
+      allow create: if true;
+    }
   }
 }
 

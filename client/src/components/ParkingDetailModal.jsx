@@ -23,6 +23,7 @@ const ParkingDetailModal = ({
   spot,
   onBookNow,
   onSaveForLater,
+  hideSaveButton = false,
 }) => {
   if (!spot) return null;
 
@@ -147,16 +148,22 @@ const ParkingDetailModal = ({
             <View style={styles.actions}>
               {hasAvailability && onBookNow && (
                 <TouchableOpacity
-                  style={[styles.actionButton, styles.bookButton]}
+                  style={[
+                    styles.actionButton,
+                    styles.bookButton,
+                    hideSaveButton && styles.fullWidthButton,
+                  ]}
                   onPress={handleBookNow}>
                   <Text style={styles.bookButtonText}>Book Now</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity
-                style={[styles.actionButton, styles.saveButton]}
-                onPress={handleSaveForLater}>
-                <Text style={styles.saveButtonText}>Save for Later</Text>
-              </TouchableOpacity>
+              {!hideSaveButton && (
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.saveButton]}
+                  onPress={handleSaveForLater}>
+                  <Text style={styles.saveButtonText}>Save for Later</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </ScrollView>
         </View>
@@ -280,6 +287,9 @@ const styles = StyleSheet.create({
     color: '#333',
     fontSize: 16,
     fontWeight: '600',
+  },
+  fullWidthButton: {
+    flex: 1,
   },
 });
 

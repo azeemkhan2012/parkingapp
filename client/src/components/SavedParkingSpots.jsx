@@ -203,6 +203,7 @@ const SavedParkingSpots = ({visible, onClose, onBookNow}) => {
         onClose={handleCloseDetail}
         spot={selectedSpot}
         onBookNow={onBookNow}
+        hideSaveButton={true}
         onSaveForLater={() => {
           // Already saved, so just close
           handleCloseDetail();

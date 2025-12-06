@@ -99,6 +99,7 @@ const HomePage = ({navigation}) => {
   const [showNearbyModal, setShowNearbyModal] = useState(false);
   const [nearbySpots, setNearbySpots] = useState([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
+  const [savingSpot, setSavingSpot] = useState(false);
   const [showSavedSpots, setShowSavedSpots] = useState(false);
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -217,15 +218,42 @@ const HomePage = ({navigation}) => {
       Alert.alert('Login Required', 'Please login to save parking spots.');
       return;
     }
+
+    // Prevent multiple simultaneous saves
+    if (savingSpot) {
+      return;
+    }
+
+    // Extract spot name for personalized message
+    const spotName =
+      spot?.name ||
+      spot?.location?.name ||
+      spot?.title ||
+      spot?.address ||
+      'Parking spot';
+
+    setSavingSpot(true);
     try {
       const result = await saveParkingSpotForLater(currentUser.uid, spot);
       if (result.success) {
-        Alert.alert('Success', 'Parking spot saved for later!');
+        Alert.alert('Saved!', `${spotName} has been saved for later.`);
       } else {
-        Alert.alert('Info', result.error || 'Could not save parking spot');
+        // Handle specific error cases
+        const errorMsg = result.error || 'Could not save parking spot';
+        if (errorMsg.toLowerCase().includes('already saved')) {
+          Alert.alert('Already Saved', 'This parking spot is already in your saved list.');
+        } else {
+          Alert.alert('Unable to Save', errorMsg);
+        }
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to save parking spot: ' + error.message);
+      Alert.alert(
+        'Error',
+        'Failed to save parking spot. Please check your connection and try again.',
+      );
+      console.error('Save error:', error);
+    } finally {
+      setSavingSpot(false);
     }
   };
 

@@ -43,12 +43,25 @@ service cloud.firestore {
     
     // Saved spots collection - users can read/write their own saved spots
     match /saved_spots/{savedSpotId} {
-      // Allow read if user is authenticated and owns the document (or document doesn't exist yet)
-      allow read: if isAuthenticated() && (resource == null || isOwner());
+      // Helper function to check if user owns the saved spot
+      function isSavedSpotOwner() {
+        return request.auth.uid == resource.data.user_id;
+      }
+      
+      // Helper function to check if user is creating their own saved spot
+      function isCreatingOwnSavedSpot() {
+        return request.auth.uid == request.resource.data.user_id;
+      }
+      
+      // Allow read if user is authenticated and owns the document
+      // This works for both individual document reads and queries
+      allow read: if isAuthenticated() && (resource == null || isSavedSpotOwner());
+      
       // Allow create if user is authenticated and sets their own user_id
-      allow create: if isAuthenticated() && isCreatingOwn();
+      allow create: if isAuthenticated() && isCreatingOwnSavedSpot();
+      
       // Allow update/delete if user is authenticated and owns the document
-      allow update, delete: if isAuthenticated() && isOwner();
+      allow update, delete: if isAuthenticated() && isSavedSpotOwner();
     }
   }
 }

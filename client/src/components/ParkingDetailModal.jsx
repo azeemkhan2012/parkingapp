@@ -32,12 +32,24 @@ const ParkingDetailModal = ({
   const rating = getSpotRating(spot);
   const reviewCount = getReviewCount(spot);
   const hasAvailability = capacity.available > 0;
-  const address = spot.address || spot.original_data?.location?.address || spot.location?.address || 'Address not available';
+  const address =
+    spot.address ||
+    spot.original_data?.location?.address ||
+    spot.location?.address ||
+    'Address not available';
   const name = spot.name || spot.location?.name || 'Parking Spot';
   const hourlyPrice = spot.pricing_hourly || spot.pricing?.hourly || price;
   const dailyPrice = spot.pricing_daily || spot.pricing?.daily || null;
-  const lat = spot.calculatedLat || spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude;
-  const lon = spot.calculatedLon || spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude;
+  const lat =
+    spot.calculatedLat ||
+    spot.latitude ||
+    spot.original_data?.location?.latitude ||
+    spot.location?.latitude;
+  const lon =
+    spot.calculatedLon ||
+    spot.longitude ||
+    spot.original_data?.location?.longitude ||
+    spot.location?.longitude;
 
   const handleBookNow = () => {
     onClose();
@@ -75,7 +87,9 @@ const ParkingDetailModal = ({
               <View style={styles.ratingContainer}>
                 <Text style={styles.ratingText}>⭐ {rating.toFixed(1)}</Text>
                 {reviewCount > 0 && (
-                  <Text style={styles.reviewCountText}>({reviewCount} reviews)</Text>
+                  <Text style={styles.reviewCountText}>
+                    ({reviewCount} reviews)
+                  </Text>
                 )}
               </View>
             )}
@@ -126,7 +140,11 @@ const ParkingDetailModal = ({
             {/* Availability */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Availability</Text>
-              <Text style={[styles.sectionContent, !hasAvailability && styles.unavailableText]}>
+              <Text
+                style={[
+                  styles.sectionContent,
+                  !hasAvailability && styles.unavailableText,
+                ]}>
                 {capacity.available} / {capacity.total} spots available
               </Text>
               {!hasAvailability && (
@@ -294,5 +312,3 @@ const styles = StyleSheet.create({
 });
 
 export default ParkingDetailModal;
-
-

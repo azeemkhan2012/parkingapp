@@ -26,7 +26,7 @@ import ParkingDetailModal from './ParkingDetailModal';
 /**
  * Modal Component showing saved parking spots
  */
-const SavedParkingSpots = ({visible, onClose, onBookNow}) => {
+const SavedParkingSpots = ({visible, onClose, onBookNow, spotToOpen = null}) => {
   const [savedSpots, setSavedSpots] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedSpot, setSelectedSpot] = useState(null);
@@ -36,6 +36,21 @@ const SavedParkingSpots = ({visible, onClose, onBookNow}) => {
       loadSavedSpots();
     }
   }, [visible]);
+
+  // Handle opening specific spot from notification
+  useEffect(() => {
+    if (visible && spotToOpen && savedSpots.length > 0) {
+      const spot = savedSpots.find(
+        s => s.savedSpotId === spotToOpen || s.id === spotToOpen || s.spot_id === spotToOpen
+      );
+      if (spot) {
+        // Small delay to ensure modal is fully rendered
+        setTimeout(() => {
+          setSelectedSpot(spot);
+        }, 300);
+      }
+    }
+  }, [visible, spotToOpen, savedSpots]);
 
   const loadSavedSpots = async () => {
     const currentUser = getCurrentUser();

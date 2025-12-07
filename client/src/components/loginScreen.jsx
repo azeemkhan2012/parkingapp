@@ -12,7 +12,9 @@ import {
   signInWithIdentifier,
   getUserProfile,
   ensureUsernameMapping,
+  saveFCMToken,
 } from '../config/firebase';
+import {initializeFCM} from '../utils/notifications';
 
 const LoginScreen = ({navigation}) => {
   const [email, setEmail] = useState('azeem@gmail.com');
@@ -41,6 +43,18 @@ const LoginScreen = ({navigation}) => {
               result.user.email,
             );
           }
+        }
+
+        // Initialize FCM and save token
+        try {
+          const fcmToken = await initializeFCM();
+          if (fcmToken) {
+            await saveFCMToken(result.user.uid, fcmToken);
+            console.log('FCM token saved successfully');
+          }
+        } catch (fcmError) {
+          console.error('Error setting up FCM:', fcmError);
+          // Don't block login if FCM fails
         }
       } catch (_) {}
       setIsLoading(false);

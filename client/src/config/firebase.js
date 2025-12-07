@@ -214,33 +214,78 @@ export const getParkingSpots = async () => {
   }
 };
 
-export const bookParkingSpot = async (spotId, userId) => {
+export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
   try {
     const spotRef = doc(db, 'parking_spots', spotId);
     const bookingsRef = collection(db, 'bookings');
 
+    let bookingId = null;
     await runTransaction(db, async tx => {
       const spotSnap = await tx.get(spotRef);
       if (!spotSnap.exists()) throw new Error('Spot does not exist');
       const spot = spotSnap.data();
-      if (!spot.is_available) throw new Error('Spot already booked');
+      
+      // Check availability - handle both boolean and capacity-based availability
+      const isAvailable = spot.is_available !== false;
+      const availableSpots = spot.availability_available || spot.availability?.available || 0;
+      
+      if (!isAvailable && availableSpots <= 0) {
+        throw new Error('Spot already booked or no spots available');
+      }
 
-      tx.update(spotRef, {
-        is_available: false,
-        booked_by: userId,
-        booked_at: serverTimestamp(),
-      });
+      // Calculate new availability
+      const newAvailableSpots = Math.max(0, availableSpots - 1);
+      const totalSpots = spot.availability_total || spot.availability?.total || 1;
+      const shouldMarkUnavailable = newAvailableSpots === 0;
 
-      const bookingDocRef = doc(bookingsRef); // auto-id
-      tx.set(bookingDocRef, {
+      // Update parking spot availability
+      const spotUpdate = {
+        availability_available: newAvailableSpots,
+        updated_at: serverTimestamp(),
+      };
+      
+      if (shouldMarkUnavailable) {
+        spotUpdate.is_available = false;
+      }
+      
+      // Store booking info on spot
+      if (!spot.bookings) {
+        spotUpdate.bookings = [];
+      }
+      
+      tx.update(spotRef, spotUpdate);
+
+      // Create booking document with comprehensive data
+      const bookingDocRef = doc(bookingsRef);
+      bookingId = bookingDocRef.id;
+      
+      const bookingDataToStore = {
         user_id: userId,
         spot_id: spotId,
         booked_at: serverTimestamp(),
         status: 'active',
-      });
+        // Store spot details for reference
+        spot_name: spot.name || spot.location?.name || spot.title || 'Parking Spot',
+        spot_address: spot.address || spot.original_data?.location?.address || spot.location?.address || 'Address not available',
+        spot_latitude: spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude,
+        spot_longitude: spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude,
+        // Payment information
+        amount: bookingData.amount || spot.pricing_hourly || spot.price || 0,
+        currency: bookingData.currency || 'PKR',
+        payment_status: bookingData.payment_status || 'paid',
+        payment_method: bookingData.payment_method || 'stripe',
+        session_id: bookingData.session_id || null,
+        // Booking dates
+        booking_start: bookingData.booking_start || serverTimestamp(),
+        booking_end: bookingData.booking_end || null,
+        // Additional metadata
+        ...bookingData,
+      };
+      
+      tx.set(bookingDocRef, bookingDataToStore);
     });
 
-    return {success: true};
+    return {success: true, bookingId};
   } catch (error) {
     return {success: false, error: error.message};
   }
@@ -561,6 +606,137 @@ export const deleteSavedParkingSpot = async (savedSpotId) => {
   }
 };
 
+// -------------------- Bookings --------------------
+export const getUserBookings = async (userId, status = null) => {
+  try {
+    const bookingsRef = collection(db, 'bookings');
+    let q;
+    
+    if (status) {
+      q = query(
+        bookingsRef,
+        where('user_id', '==', userId),
+        where('status', '==', status),
+      );
+    } else {
+      q = query(bookingsRef, where('user_id', '==', userId));
+    }
+    
+    const snapshot = await getDocs(q);
+    const bookings = snapshot.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        ...data,
+        // Convert Firestore timestamps to readable format
+        booked_at: data.booked_at?.toDate?.() || data.booked_at,
+        booking_start: data.booking_start?.toDate?.() || data.booking_start,
+        booking_end: data.booking_end?.toDate?.() || data.booking_end,
+      };
+    });
+    
+    // Sort by most recent first
+    bookings.sort((a, b) => {
+      const aTime = a.booked_at?.getTime?.() || 0;
+      const bTime = b.booked_at?.getTime?.() || 0;
+      return bTime - aTime;
+    });
+    
+    return {success: true, bookings};
+  } catch (error) {
+    console.error('Error getting user bookings:', error);
+    return {success: false, error: error.message, bookings: []};
+  }
+};
+
+export const getBillingHistory = async (userId) => {
+  try {
+    const bookingsRef = collection(db, 'bookings');
+    const q = query(bookingsRef, where('user_id', '==', userId));
+    
+    const snapshot = await getDocs(q);
+    const bills = snapshot.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        booking_id: d.id,
+        spot_name: data.spot_name || 'Parking Spot',
+        spot_address: data.spot_address || 'Address not available',
+        amount: data.amount || 0,
+        currency: data.currency || 'PKR',
+        payment_status: data.payment_status || 'unknown',
+        payment_method: data.payment_method || 'unknown',
+        status: data.status || 'unknown',
+        booked_at: data.booked_at?.toDate?.() || data.booked_at,
+        booking_start: data.booking_start?.toDate?.() || data.booking_start,
+        booking_end: data.booking_end?.toDate?.() || data.booking_end,
+        session_id: data.session_id || null,
+      };
+    });
+    
+    // Sort by most recent first
+    bills.sort((a, b) => {
+      const aTime = a.booked_at?.getTime?.() || 0;
+      const bTime = b.booked_at?.getTime?.() || 0;
+      return bTime - aTime;
+    });
+    
+    return {success: true, bills};
+  } catch (error) {
+    console.error('Error getting billing history:', error);
+    return {success: false, error: error.message, bills: []};
+  }
+};
+
+export const cancelBooking = async (bookingId, userId) => {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    
+    if (!bookingSnap.exists()) {
+      return {success: false, error: 'Booking not found'};
+    }
+    
+    const booking = bookingSnap.data();
+    if (booking.user_id !== userId) {
+      return {success: false, error: 'Unauthorized'};
+    }
+    
+    if (booking.status === 'cancelled') {
+      return {success: false, error: 'Booking already cancelled'};
+    }
+    
+    // Update booking status
+    await updateDoc(bookingRef, {
+      status: 'cancelled',
+      cancelled_at: serverTimestamp(),
+    });
+    
+    // Update parking spot availability
+    if (booking.spot_id) {
+      const spotRef = doc(db, 'parking_spots', booking.spot_id);
+      const spotSnap = await getDoc(spotRef);
+      
+      if (spotSnap.exists()) {
+        const spot = spotSnap.data();
+        const currentAvailable = spot.availability_available || 0;
+        const totalSpots = spot.availability_total || 1;
+        const newAvailable = Math.min(totalSpots, currentAvailable + 1);
+        
+        await updateDoc(spotRef, {
+          availability_available: newAvailable,
+          is_available: newAvailable > 0,
+          updated_at: serverTimestamp(),
+        });
+      }
+    }
+    
+    return {success: true};
+  } catch (error) {
+    return {success: false, error: error.message};
+  }
+};
+
 export default {
   auth,
   db,
@@ -577,6 +753,9 @@ export default {
   getSavedParkingSpots,
   removeSavedParkingSpot,
   deleteSavedParkingSpot,
+  getUserBookings,
+  getBillingHistory,
+  cancelBooking,
   // extras
   isUsernameAvailable,
   reserveUsername,

@@ -22,8 +22,15 @@ import {NavigationContainer} from '@react-navigation/native';
 import HomePage from './src/components/homePage';
 import {StripeProvider} from '@stripe/stripe-react-native';
 import {Alert, Linking} from 'react-native';
-import {bookParkingSpot, getCurrentUser, saveFCMToken} from './src/config/firebase';
-import {setupNotificationListeners, getFCMToken} from './src/utils/notifications';
+import {
+  bookParkingSpot,
+  getCurrentUser,
+  saveFCMToken,
+} from './src/config/firebase';
+import {
+  setupNotificationListeners,
+  getFCMToken,
+} from './src/utils/notifications';
 import messaging from '@react-native-firebase/messaging';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // import {NavigationContainer} from './node_modules/@react-navigation/native/lib/typescript/src';
@@ -95,18 +102,20 @@ function App(): React.JSX.Element {
     const unsubscribeForeground = setupNotificationListeners(getNavigation);
 
     // Handle FCM token refresh
-    const unsubscribeTokenRefresh = messaging().onTokenRefresh(async token => {
-      console.log('FCM token refreshed:', token);
-      const currentUser = getCurrentUser();
-      if (currentUser) {
-        try {
-          await saveFCMToken(currentUser.uid, token);
-          console.log('Refreshed FCM token saved');
-        } catch (error) {
-          console.error('Error saving refreshed token:', error);
+    const unsubscribeTokenRefresh = messaging().onTokenRefresh(
+      async (token: any) => {
+        console.log('FCM token refreshed:', token);
+        const currentUser = getCurrentUser();
+        if (currentUser) {
+          try {
+            await saveFCMToken(currentUser.uid, token);
+            console.log('Refreshed FCM token saved');
+          } catch (error) {
+            console.error('Error saving refreshed token:', error);
+          }
         }
-      }
-    });
+      },
+    );
 
     return () => {
       unsubscribeForeground();
@@ -156,7 +165,7 @@ function App(): React.JSX.Element {
       if (!data.spotId) {
         throw new Error('Spot ID not found in payment data');
       }
-      
+
       // Get spot data from AsyncStorage (stored before checkout)
       let spot = null;
       try {
@@ -167,10 +176,10 @@ function App(): React.JSX.Element {
       } catch (storageErr) {
         console.error('Error getting spot data from storage:', storageErr);
       }
-      
+
       // Get payment amount from response or spot data
       const paymentAmount = data.amount || spot?.pricing_hourly || 0;
-      
+
       // Book parking spot with payment details
       const bookingData = {
         amount: paymentAmount,
@@ -180,15 +189,19 @@ function App(): React.JSX.Element {
         session_id: sessionId,
         booking_start: new Date(),
       };
-      
-      const result = await bookParkingSpot(data.spotId, currentUser.uid, bookingData);
-      
+
+      const result = await bookParkingSpot(
+        data.spotId,
+        currentUser.uid,
+        bookingData,
+      );
+
       if (result?.success) {
         navigationRef.current.navigate('BookingConfirmation', {
           spot: spot || {id: data.spotId},
           bookingId: result.bookingId || sessionId,
         });
-        
+
         // Clean up stored spot data
         try {
           await AsyncStorage.removeItem(`spot_${data.spotId}`);
@@ -270,7 +283,10 @@ function App(): React.JSX.Element {
           />
           <Stack.Screen name="DirectionsView" component={DirectionsView} />
           <Stack.Screen name="Bookings" component={BookingsScreen} />
-          <Stack.Screen name="BillingHistory" component={BillingHistoryScreen} />
+          <Stack.Screen
+            name="BillingHistory"
+            component={BillingHistoryScreen}
+          />
         </Stack.Navigator>
       </StripeProvider>
     </NavigationContainer>

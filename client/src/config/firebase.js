@@ -30,7 +30,7 @@ import {
   writeBatch,
   runTransaction,
   orderBy,
-  limit
+  limit,
 } from 'firebase/firestore';
 
 // Initialize Firebase
@@ -226,18 +226,20 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
       const spotSnap = await tx.get(spotRef);
       if (!spotSnap.exists()) throw new Error('Spot does not exist');
       const spot = spotSnap.data();
-      
+
       // Check availability - handle both boolean and capacity-based availability
       const isAvailable = spot.is_available !== false;
-      const availableSpots = spot.availability_available || spot.availability?.available || 0;
-      
+      const availableSpots =
+        spot.availability_available || spot.availability?.available || 0;
+
       if (!isAvailable && availableSpots <= 0) {
         throw new Error('Spot already booked or no spots available');
       }
 
       // Calculate new availability
       const newAvailableSpots = Math.max(0, availableSpots - 1);
-      const totalSpots = spot.availability_total || spot.availability?.total || 1;
+      const totalSpots =
+        spot.availability_total || spot.availability?.total || 1;
       const shouldMarkUnavailable = newAvailableSpots === 0;
 
       // Update parking spot availability
@@ -245,32 +247,43 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
         availability_available: newAvailableSpots,
         updated_at: serverTimestamp(),
       };
-      
+
       if (shouldMarkUnavailable) {
         spotUpdate.is_available = false;
       }
-      
+
       // Store booking info on spot
       if (!spot.bookings) {
         spotUpdate.bookings = [];
       }
-      
+
       tx.update(spotRef, spotUpdate);
 
       // Create booking document with comprehensive data
       const bookingDocRef = doc(bookingsRef);
       bookingId = bookingDocRef.id;
-      
+
       const bookingDataToStore = {
         user_id: userId,
         spot_id: spotId,
         booked_at: serverTimestamp(),
         status: 'active',
         // Store spot details for reference
-        spot_name: spot.name || spot.location?.name || spot.title || 'Parking Spot',
-        spot_address: spot.address || spot.original_data?.location?.address || spot.location?.address || 'Address not available',
-        spot_latitude: spot.latitude || spot.original_data?.location?.latitude || spot.location?.latitude,
-        spot_longitude: spot.longitude || spot.original_data?.location?.longitude || spot.location?.longitude,
+        spot_name:
+          spot.name || spot.location?.name || spot.title || 'Parking Spot',
+        spot_address:
+          spot.address ||
+          spot.original_data?.location?.address ||
+          spot.location?.address ||
+          'Address not available',
+        spot_latitude:
+          spot.latitude ||
+          spot.original_data?.location?.latitude ||
+          spot.location?.latitude,
+        spot_longitude:
+          spot.longitude ||
+          spot.original_data?.location?.longitude ||
+          spot.location?.longitude,
         // Payment information
         amount: bookingData.amount || spot.pricing_hourly || spot.price || 0,
         currency: bookingData.currency || 'PKR',
@@ -283,7 +296,7 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
         // Additional metadata
         ...bookingData,
       };
-      
+
       tx.set(bookingDocRef, bookingDataToStore);
     });
 
@@ -343,7 +356,9 @@ export const changeUsername = async (uid, oldUsername, newUsername, email) => {
 
   // Basic validation (avoid weird inputs that rules might reject)
   if (!/^[a-zA-Z0-9_]{3,30}$/.test(newU)) {
-    const e = new Error('invalid-username'); e.code = 'invalid-username'; throw e;
+    const e = new Error('invalid-username');
+    e.code = 'invalid-username';
+    throw e;
   }
 
   const newRef = doc(db, 'usernames', newU);
@@ -352,7 +367,9 @@ export const changeUsername = async (uid, oldUsername, newUsername, email) => {
   // Fail fast if the new username is already taken
   const newSnap = await getDoc(newRef);
   if (newSnap.exists()) {
-    const e = new Error('username-taken'); e.code = 'username-taken'; throw e;
+    const e = new Error('username-taken');
+    e.code = 'username-taken';
+    throw e;
   }
 
   // Build a batch: create new mapping, delete old (if owned), update users/{uid}
@@ -374,12 +391,12 @@ export const changeUsername = async (uid, oldUsername, newUsername, email) => {
 
   batch.set(
     doc(db, 'users', uid),
-    { username: newUsername, updated_at: serverTimestamp() },
-    { merge: true }
+    {username: newUsername, updated_at: serverTimestamp()},
+    {merge: true},
   );
 
   await batch.commit();
-  return { success: true };
+  return {success: true};
 };
 
 // Login with username OR email
@@ -423,9 +440,17 @@ export const createParkingSpot = async spotData => {
 export const saveParkingSpotForLater = async (userId, spotData) => {
   try {
     // Extract required fields only
-    const title = spotData.name || spotData.location?.name || spotData.title || 'Parking Spot';
-    const address = spotData.address || spotData.original_data?.location?.address || spotData.location?.address || 'Address not available';
-    
+    const title =
+      spotData.name ||
+      spotData.location?.name ||
+      spotData.title ||
+      'Parking Spot';
+    const address =
+      spotData.address ||
+      spotData.original_data?.location?.address ||
+      spotData.location?.address ||
+      'Address not available';
+
     // Extract price
     let price = 0;
     if (spotData.pricing_hourly) price = spotData.pricing_hourly;
@@ -438,33 +463,45 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
       }
     } else if (spotData.pricing?.hourly) price = spotData.pricing.hourly;
     else if (spotData.pricing?.daily) price = spotData.pricing.daily;
-    
+
     // Extract capacity
-    let capacity = { available: 0, total: 0 };
-    if (spotData.availability_available !== undefined && spotData.availability_total !== undefined) {
+    let capacity = {available: 0, total: 0};
+    if (
+      spotData.availability_available !== undefined &&
+      spotData.availability_total !== undefined
+    ) {
       capacity = {
         available: spotData.availability_available,
         total: spotData.availability_total,
       };
-    } else if (spotData.availability?.available && spotData.availability?.total) {
+    } else if (
+      spotData.availability?.available &&
+      spotData.availability?.total
+    ) {
       capacity = {
         available: spotData.availability.available,
         total: spotData.availability.total,
       };
     }
-    
+
     // Get distance (if already calculated)
     const distance = spotData.distance || null;
-    
+
     // Get coordinates for duplicate checking
-    const lat = spotData.latitude || spotData.original_data?.location?.latitude || spotData.location?.latitude;
-    const lon = spotData.longitude || spotData.original_data?.location?.longitude || spotData.location?.longitude;
+    const lat =
+      spotData.latitude ||
+      spotData.original_data?.location?.latitude ||
+      spotData.location?.latitude;
+    const lon =
+      spotData.longitude ||
+      spotData.original_data?.location?.longitude ||
+      spotData.location?.longitude;
     const spotId = spotData.id || spotData.spot_id || '';
-    
+
     // Check if already saved - wrapped in try-catch to avoid permission errors
     const savedSpotsRef = collection(db, 'saved_spots');
     let existingDocs = {empty: true, docs: []};
-    
+
     try {
       if (spotId) {
         const q = query(
@@ -475,10 +512,7 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
         existingDocs = await getDocs(q);
       } else if (lat && lon) {
         // If no ID, check by coordinates (approximate match)
-        const q = query(
-          savedSpotsRef,
-          where('user_id', '==', userId),
-        );
+        const q = query(savedSpotsRef, where('user_id', '==', userId));
         const allUserSpots = await getDocs(q);
         existingDocs = {
           empty: !allUserSpots.docs.some(doc => {
@@ -486,17 +520,23 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
             const savedLat = savedData.latitude;
             const savedLon = savedData.longitude;
             // Check if coordinates are very close (within 0.0001 degrees, ~11 meters)
-            return savedLat && savedLon && 
-                   Math.abs(savedLat - lat) < 0.0001 && 
-                   Math.abs(savedLon - lon) < 0.0001;
+            return (
+              savedLat &&
+              savedLon &&
+              Math.abs(savedLat - lat) < 0.0001 &&
+              Math.abs(savedLon - lon) < 0.0001
+            );
           }),
           docs: allUserSpots.docs.filter(doc => {
             const savedData = doc.data();
             const savedLat = savedData.latitude;
             const savedLon = savedData.longitude;
-            return savedLat && savedLon && 
-                   Math.abs(savedLat - lat) < 0.0001 && 
-                   Math.abs(savedLon - lon) < 0.0001;
+            return (
+              savedLat &&
+              savedLon &&
+              Math.abs(savedLat - lat) < 0.0001 &&
+              Math.abs(savedLon - lon) < 0.0001
+            );
           }),
         };
       }
@@ -506,7 +546,7 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
       console.warn('Could not check for duplicates:', checkError.message);
       existingDocs = {empty: true, docs: []};
     }
-    
+
     if (!existingDocs.empty) {
       return {success: false, error: 'Spot already saved'};
     }
@@ -521,13 +561,14 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
       capacity_total: capacity.total || 0,
       saved_at: serverTimestamp(),
     };
-    
+
     // Add optional fields only if they have values
     if (spotId) savedData.spot_id = spotId;
-    if (distance !== null && distance !== undefined) savedData.distance = distance;
+    if (distance !== null && distance !== undefined)
+      savedData.distance = distance;
     if (lat) savedData.latitude = lat;
     if (lon) savedData.longitude = lon;
-    
+
     // Debug: Log the data being saved
     console.log('Saving parking spot with data:', {
       ...savedData,
@@ -536,12 +577,12 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
     console.log('Current user ID:', userId);
     const currentUser = getCurrentUser();
     console.log('Current auth user:', currentUser?.uid);
-    
+
     // Verify user_id matches current user
     if (!currentUser || userId !== currentUser.uid) {
       return {success: false, error: 'User ID mismatch or not authenticated'};
     }
-    
+
     // Save only the required fields in a simple structure
     const docRef = await addDoc(savedSpotsRef, savedData);
     return {success: true, id: docRef.id};
@@ -584,7 +625,7 @@ export const getSavedParkingSpots = async userId => {
   }
 };
 
-export const removeSavedParkingSpot = async (savedSpotId) => {
+export const removeSavedParkingSpot = async savedSpotId => {
   try {
     const savedSpotRef = doc(db, 'saved_spots', savedSpotId);
     await updateDoc(savedSpotRef, {
@@ -598,7 +639,7 @@ export const removeSavedParkingSpot = async (savedSpotId) => {
   }
 };
 
-export const deleteSavedParkingSpot = async (savedSpotId) => {
+export const deleteSavedParkingSpot = async savedSpotId => {
   try {
     const savedSpotRef = doc(db, 'saved_spots', savedSpotId);
     await deleteDoc(savedSpotRef);
@@ -661,7 +702,7 @@ export const deleteFCMToken = async userId => {
 export const getNotifications = async userId => {
   try {
     console.log('[getNotifications] Fetching notifications for user:', userId);
-    
+
     // Try to query with orderBy first (requires index)
     let snapshot;
     try {
@@ -674,43 +715,51 @@ export const getNotifications = async userId => {
       snapshot = await getDocs(q);
     } catch (indexError) {
       // If index doesn't exist, fallback to query without orderBy
-      console.warn('[getNotifications] Index may not exist, using fallback query:', indexError.code);
+      console.warn(
+        '[getNotifications] Index may not exist, using fallback query:',
+        indexError.code,
+      );
       const fallbackQ = query(
         collection(db, 'notifications'),
         where('user_id', '==', userId),
       );
       snapshot = await getDocs(fallbackQ);
     }
-    
+
     let notifications = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-    
+
     // Sort manually by created_at (descending) - handles both Firestore Timestamp and fallback
     if (notifications.length > 0) {
       notifications.sort((a, b) => {
-        const aTime = a.created_at?.toMillis?.() || 
-                     a.created_at?.seconds * 1000 || 
-                     a.created_at?._seconds * 1000 ||
-                     (a.created_at ? new Date(a.created_at).getTime() : 0) ||
-                     0;
-        const bTime = b.created_at?.toMillis?.() || 
-                     b.created_at?.seconds * 1000 || 
-                     b.created_at?._seconds * 1000 ||
-                     (b.created_at ? new Date(b.created_at).getTime() : 0) ||
-                     0;
+        const aTime =
+          a.created_at?.toMillis?.() ||
+          a.created_at?.seconds * 1000 ||
+          a.created_at?._seconds * 1000 ||
+          (a.created_at ? new Date(a.created_at).getTime() : 0) ||
+          0;
+        const bTime =
+          b.created_at?.toMillis?.() ||
+          b.created_at?.seconds * 1000 ||
+          b.created_at?._seconds * 1000 ||
+          (b.created_at ? new Date(b.created_at).getTime() : 0) ||
+          0;
         return bTime - aTime; // Descending order (newest first)
       });
     }
-    
+
     // Limit to 10 after sorting
     notifications = notifications.slice(0, 10);
-    
-    console.log('[getNotifications] Found notifications:', notifications.length);
+
+    console.log(
+      '[getNotifications] Found notifications:',
+      notifications.length,
+    );
     return notifications;
   } catch (error) {
     console.error('[getNotifications] Error getting notifications:', error);
     console.error('[getNotifications] Error code:', error.code);
     console.error('[getNotifications] Error message:', error.message);
-    
+
     // If it's still an index error even after fallback, provide helpful message
     if (error.code === 'failed-precondition') {
       // Try once more with just the user_id filter
@@ -721,28 +770,38 @@ export const getNotifications = async userId => {
           where('user_id', '==', userId),
         );
         const simpleSnapshot = await getDocs(simpleQ);
-        let notifications = simpleSnapshot.docs.map(d => ({id: d.id, ...d.data()}));
-        
+        let notifications = simpleSnapshot.docs.map(d => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
         // Sort manually
         notifications.sort((a, b) => {
-          const aTime = a.created_at?.toMillis?.() || 
-                       a.created_at?.seconds * 1000 || 
-                       (a.created_at ? new Date(a.created_at).getTime() : 0) || 0;
-          const bTime = b.created_at?.toMillis?.() || 
-                       b.created_at?.seconds * 1000 || 
-                       (b.created_at ? new Date(b.created_at).getTime() : 0) || 0;
+          const aTime =
+            a.created_at?.toMillis?.() ||
+            a.created_at?.seconds * 1000 ||
+            (a.created_at ? new Date(a.created_at).getTime() : 0) ||
+            0;
+          const bTime =
+            b.created_at?.toMillis?.() ||
+            b.created_at?.seconds * 1000 ||
+            (b.created_at ? new Date(b.created_at).getTime() : 0) ||
+            0;
           return bTime - aTime;
         });
-        
+
         return notifications.slice(0, 10);
       } catch (fallbackError) {
-        console.error('[getNotifications] Fallback also failed:', fallbackError);
+        console.error(
+          '[getNotifications] Fallback also failed:',
+          fallbackError,
+        );
         throw new Error(
-          'Failed to load notifications. Please create a Firestore index: notifications collection with user_id (Ascending) and created_at (Descending). Check Firebase Console for the index creation link.'
+          'Failed to load notifications. Please create a Firestore index: notifications collection with user_id (Ascending) and created_at (Descending). Check Firebase Console for the index creation link.',
         );
       }
     }
-    
+
     throw error;
   }
 };
@@ -759,12 +818,14 @@ export const markNotificationAsRead = async notificationId => {
     return {success: true};
   } catch (error) {
     console.error('Error marking notification as read:', error);
+  }
+};
 // -------------------- Bookings --------------------
 export const getUserBookings = async (userId, status = null) => {
   try {
     const bookingsRef = collection(db, 'bookings');
     let q;
-    
+
     if (status) {
       q = query(
         bookingsRef,
@@ -774,7 +835,7 @@ export const getUserBookings = async (userId, status = null) => {
     } else {
       q = query(bookingsRef, where('user_id', '==', userId));
     }
-    
+
     const snapshot = await getDocs(q);
     const bookings = snapshot.docs.map(d => {
       const data = d.data();
@@ -787,14 +848,14 @@ export const getUserBookings = async (userId, status = null) => {
         booking_end: data.booking_end?.toDate?.() || data.booking_end,
       };
     });
-    
+
     // Sort by most recent first
     bookings.sort((a, b) => {
       const aTime = a.booked_at?.getTime?.() || 0;
       const bTime = b.booked_at?.getTime?.() || 0;
       return bTime - aTime;
     });
-    
+
     return {success: true, bookings};
   } catch (error) {
     console.error('Error getting user bookings:', error);
@@ -802,11 +863,11 @@ export const getUserBookings = async (userId, status = null) => {
   }
 };
 
-export const getBillingHistory = async (userId) => {
+export const getBillingHistory = async userId => {
   try {
     const bookingsRef = collection(db, 'bookings');
     const q = query(bookingsRef, where('user_id', '==', userId));
-    
+
     const snapshot = await getDocs(q);
     const bills = snapshot.docs.map(d => {
       const data = d.data();
@@ -826,14 +887,14 @@ export const getBillingHistory = async (userId) => {
         session_id: data.session_id || null,
       };
     });
-    
+
     // Sort by most recent first
     bills.sort((a, b) => {
       const aTime = a.booked_at?.getTime?.() || 0;
       const bTime = b.booked_at?.getTime?.() || 0;
       return bTime - aTime;
     });
-    
+
     return {success: true, bills};
   } catch (error) {
     console.error('Error getting billing history:', error);
@@ -845,37 +906,37 @@ export const cancelBooking = async (bookingId, userId) => {
   try {
     const bookingRef = doc(db, 'bookings', bookingId);
     const bookingSnap = await getDoc(bookingRef);
-    
+
     if (!bookingSnap.exists()) {
       return {success: false, error: 'Booking not found'};
     }
-    
+
     const booking = bookingSnap.data();
     if (booking.user_id !== userId) {
       return {success: false, error: 'Unauthorized'};
     }
-    
+
     if (booking.status === 'cancelled') {
       return {success: false, error: 'Booking already cancelled'};
     }
-    
+
     // Update booking status
     await updateDoc(bookingRef, {
       status: 'cancelled',
       cancelled_at: serverTimestamp(),
     });
-    
+
     // Update parking spot availability
     if (booking.spot_id) {
       const spotRef = doc(db, 'parking_spots', booking.spot_id);
       const spotSnap = await getDoc(spotRef);
-      
+
       if (spotSnap.exists()) {
         const spot = spotSnap.data();
         const currentAvailable = spot.availability_available || 0;
         const totalSpots = spot.availability_total || 1;
         const newAvailable = Math.min(totalSpots, currentAvailable + 1);
-        
+
         await updateDoc(spotRef, {
           availability_available: newAvailable,
           is_available: newAvailable > 0,
@@ -883,7 +944,7 @@ export const cancelBooking = async (bookingId, userId) => {
         });
       }
     }
-    
+
     return {success: true};
   } catch (error) {
     return {success: false, error: error.message};

@@ -223,7 +223,7 @@ const BookingsScreen = ({navigation}) => {
                   </View>
                 </View>
                 <Text style={styles.bookingAmount}>
-                  {booking.currency || 'PKR'} {booking.amount || 0}
+                  {'PKR'} {booking.amount || 0}
                 </Text>
               </View>
 
@@ -281,7 +281,7 @@ const BookingsScreen = ({navigation}) => {
                         longitude: booking.spot_longitude,
                         spotName: booking.spot_name,
                       });
-                      navigation.navigate('home', {
+                      navigation.navigate('DirectionsView', {
                         bookingLocation: {
                           latitude: booking.spot_latitude,
                           longitude: booking.spot_longitude,
@@ -542,4 +542,5 @@ const styles = StyleSheet.create({
 });
 
 export default BookingsScreen;
+
 

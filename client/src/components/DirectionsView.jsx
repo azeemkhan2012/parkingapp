@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Dimensions,
   Image,
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
@@ -33,17 +32,23 @@ const APIKEY =
   'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg';
 
 const DirectionsView = ({route, navigation}) => {
-  const {spot, userLocation, destinationCoords} = route.params || {};
-  const [currentLocation, setCurrentLocation] = useState(userLocation);
+  const {bookingLocation} = route.params || {};
+  const destinationCoords = bookingLocation;
+
+  const [currentLocation, setCurrentLocation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [routeDirections, setRouteDirections] = useState(null);
+  const [routeCoords, setRouteCoords] = useState([]); // full route geometry
   const [distance, setDistance] = useState(null);
   const [duration, setDuration] = useState(null);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [isSimulating, setIsSimulating] = useState(false); // simulation flag
   const [currentStep, setCurrentStep] = useState(null);
   const [selectedRouteProfile, setSelectedRouteProfile] = useState('driving');
-  const [zoom, setZoom] = useState(14);
+  const [zoom, setZoom] = useState(12);
+
   const cameraRef = useRef(null);
+  const simIntervalRef = useRef(null); // interval ref for simulation
 
   const routeProfiles = [
     {
@@ -60,15 +65,36 @@ const DirectionsView = ({route, navigation}) => {
     },
   ];
 
+  // Get initial location
   useEffect(() => {
-    if (currentLocation && destinationCoords) {
+    Geolocation.getCurrentPosition(
+      position => {
+        setCurrentLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+      },
+      error => {
+        console.log('Geolocation error:', error);
+        Alert.alert(
+          'Location Error',
+          'Unable to fetch your current location. Please ensure location services are enabled.',
+        );
+      },
+      {enableHighAccuracy: true},
+    );
+  }, []);
+
+  // Build the route when we have location + destination or profile changes
+  useEffect(() => {
+    if (currentLocation && bookingLocation) {
       createRouteLine(currentLocation, selectedRouteProfile);
     }
   }, [currentLocation, destinationCoords, selectedRouteProfile]);
 
+  // Watch real GPS only when navigating AND not simulating
   useEffect(() => {
-    // Update location periodically when navigating
-    if (isNavigating) {
+    if (isNavigating && !isSimulating) {
       const watchId = Geolocation.watchPosition(
         location => {
           setCurrentLocation({
@@ -84,8 +110,9 @@ const DirectionsView = ({route, navigation}) => {
         Geolocation.clearWatch(watchId);
       };
     }
-  }, [isNavigating]);
+  }, [isNavigating, isSimulating]);
 
+  // Keep camera on current location
   useEffect(() => {
     if (currentLocation && cameraRef.current) {
       try {
@@ -102,7 +129,7 @@ const DirectionsView = ({route, navigation}) => {
         console.warn('Camera update error:', e);
       }
     }
-  }, [currentLocation, zoom, isNavigating]);
+  }, []);
 
   function makeRouterFeature(coordinates) {
     return {
@@ -122,8 +149,9 @@ const DirectionsView = ({route, navigation}) => {
 
   async function createRouteLine(coords, routeProfile) {
     if (!coords || !destinationCoords) return;
-
-    setLoading(true);
+    if (!routeCoords.length > 0) {
+      setLoading(true);
+    }
     const startCoords = `${coords.longitude},${coords.latitude}`;
     const endCoords = `${destinationCoords.longitude},${destinationCoords.latitude}`;
     const geometries = 'geojson';
@@ -136,7 +164,7 @@ const DirectionsView = ({route, navigation}) => {
       if (json.routes && json.routes.length > 0) {
         const route = json.routes[0];
         setDistance((route.distance / 1000).toFixed(1));
-        
+
         const totalSeconds = route.duration;
         const hours = Math.floor(totalSeconds / 3600);
         const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -150,13 +178,17 @@ const DirectionsView = ({route, navigation}) => {
         let steps = route.legs[0].steps;
 
         setCurrentStep(steps);
+        setRouteCoords(coordinates); // store route points for simulation
         setRouteDirections(makeRouterFeature(coordinates));
       } else {
         Alert.alert('Error', 'Could not calculate route. Please try again.');
       }
     } catch (e) {
       console.log('Route error:', e);
-      Alert.alert('Error', 'Failed to get directions. Please check your connection.');
+      Alert.alert(
+        'Error',
+        'Failed to get directions. Please check your connection.',
+      );
     } finally {
       setLoading(false);
     }
@@ -167,7 +199,13 @@ const DirectionsView = ({route, navigation}) => {
       Alert.alert('No route', 'Please wait for the route to be calculated.');
       return;
     }
-    setIsNavigating(!isNavigating);
+
+    // Stop simulation if user manually stops navigation
+    if (isNavigating && isSimulating) {
+      stopSimulation();
+    }
+
+    setIsNavigating(prev => !prev);
   }
 
   function getDistance(lat1, lon1, lat2, lon2) {
@@ -182,7 +220,7 @@ const DirectionsView = ({route, navigation}) => {
       Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // meters
+    return R * c;
   }
 
   function handleNavigationUpdate(location) {
@@ -201,8 +239,28 @@ const DirectionsView = ({route, navigation}) => {
           animationMode: 'flyTo',
           animationDuration: 1000,
         });
+        setZoom(16);
       } catch (e) {
         console.warn('Camera update error:', e);
+      }
+    }
+
+    // Extra: Check distance to final destination
+    if (destinationCoords) {
+      const destDistance = getDistance(
+        userLat,
+        userLng,
+        Number(destinationCoords.latitude),
+        Number(destinationCoords.longitude),
+      );
+
+      if (destDistance < 20) {
+        Alert.alert('Arrived!', 'You reached your destination.');
+        setIsNavigating(false);
+        setIsSimulating(false);
+        setCurrentStep([]);
+        stopSimulation();
+        return;
       }
     }
 
@@ -213,13 +271,14 @@ const DirectionsView = ({route, navigation}) => {
       const distance = getDistance(userLat, userLng, endLat, endLng);
 
       if (distance < 20) {
-        // Step complete → move to next
         const updatedSteps = [...currentStep];
         updatedSteps.shift();
 
         if (updatedSteps.length === 0) {
           Alert.alert('Arrived!', 'You reached your destination.');
           setIsNavigating(false);
+          setIsSimulating(false);
+          stopSimulation();
         } else {
           setCurrentStep(updatedSteps);
         }
@@ -227,13 +286,80 @@ const DirectionsView = ({route, navigation}) => {
     }
   }
 
-  const spotName =
-    spot?.name || spot?.location?.name || spot?.title || 'Parking Spot';
+  // --- SIMULATION LOGIC ---
+
+  function startSimulation() {
+    if (!routeCoords || routeCoords.length === 0) {
+      Alert.alert('No route', 'Route coordinates are not available.');
+      return;
+    }
+
+    try {
+      cameraRef.current.setCamera({
+        centerCoordinate: [userLng, userLat],
+        zoomLevel: 16,
+        pitch: 70,
+        animationMode: 'flyTo',
+        animationDuration: 1000,
+      });
+    } catch (e) {
+      console.warn('Camera update error:', e);
+    }
+    setZoom(16);
+    // reset if was simulating already
+    stopSimulation();
+
+    setIsNavigating(true);
+    setIsSimulating(true);
+
+    let index = 0;
+
+    simIntervalRef.current = setInterval(() => {
+      if (index >= routeCoords.length) {
+        stopSimulation();
+        Alert.alert('Arrived!', 'You reached your destination (simulation).');
+        setIsNavigating(false);
+        setIsSimulating(false);
+        return;
+      }
+
+      const [lng, lat] = routeCoords[index];
+
+      const fakeLocation = {
+        coords: {
+          latitude: lat,
+          longitude: lng,
+        },
+      };
+
+      // update marker position
+      setCurrentLocation({latitude: lat, longitude: lng});
+
+      // reuse normal navigation logic
+      handleNavigationUpdate(fakeLocation);
+
+      index++;
+    }, 1000); // 1 second per point
+  }
+
+  function stopSimulation() {
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
+  }
+
+  // Clear sim interval on unmount
+  useEffect(() => {
+    return () => {
+      stopSimulation();
+    };
+  }, []);
 
   const cameraCenter = currentLocation
     ? [currentLocation.longitude, currentLocation.latitude]
     : destinationCoords
-    ? [destinationCoords.longitude, destinationCoords.latitude]
+    ? [Number(destinationCoords.longitude), Number(destinationCoords.latitude)]
     : [-122.4324, 37.78825];
 
   return (
@@ -245,7 +371,9 @@ const DirectionsView = ({route, navigation}) => {
           onPress={() => navigation.goBack()}>
           <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Directions to {spotName}</Text>
+        <Text style={styles.headerTitle}>
+          Directions to {destinationCoords?.spotName}
+        </Text>
         <View style={styles.placeholder} />
       </View>
 
@@ -281,16 +409,9 @@ const DirectionsView = ({route, navigation}) => {
           <MapboxGL.PointAnnotation
             id="destination"
             coordinate={[
-              destinationCoords.longitude,
-              destinationCoords.latitude,
-            ]}>
-            <View style={styles.destinationIcon}>
-              <Image
-                source={require('../assets/parking.png')}
-                style={styles.parkingIcon}
-              />
-            </View>
-          </MapboxGL.PointAnnotation>
+              Number(destinationCoords.longitude),
+              Number(destinationCoords.latitude),
+            ]}></MapboxGL.PointAnnotation>
         )}
 
         {/* User Location */}
@@ -299,7 +420,7 @@ const DirectionsView = ({route, navigation}) => {
           androidRenderMode={'gps'}
           showsUserHeadingIndicator={true}
           onUpdate={loc => {
-            if (isNavigating) {
+            if (isNavigating && !isSimulating) {
               handleNavigationUpdate(loc);
             }
           }}
@@ -343,7 +464,11 @@ const DirectionsView = ({route, navigation}) => {
             </View>
             <TouchableOpacity
               style={styles.navCloseBtn}
-              onPress={() => setIsNavigating(false)}>
+              onPress={() => {
+                setIsNavigating(false);
+                setIsSimulating(false);
+                stopSimulation();
+              }}>
               <Image
                 source={require('../assets/close.png')}
                 style={styles.navigateIcon}
@@ -359,7 +484,8 @@ const DirectionsView = ({route, navigation}) => {
           <View style={styles.routeInfoSection}>
             <View style={styles.transportModes}>
               {routeProfiles.map(profile => {
-                const isSelected = selectedRouteProfile === profile.mapboxProfile;
+                const isSelected =
+                  selectedRouteProfile === profile.mapboxProfile;
                 return (
                   <TouchableOpacity
                     key={profile.id}
@@ -383,15 +509,16 @@ const DirectionsView = ({route, navigation}) => {
                 );
               })}
             </View>
+            <View style={styles.infoLabelRow}>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>DISTANCE</Text>
+                <Text style={styles.infoValue}>{distance} KM</Text>
+              </View>
 
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>DISTANCE</Text>
-              <Text style={styles.infoValue}>{distance} KM</Text>
-            </View>
-
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>ESTIMATED TIME</Text>
-              <Text style={styles.infoValue}>{duration}</Text>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>ESTIMATED TIME</Text>
+                <Text style={styles.infoValue}>{duration}</Text>
+              </View>
             </View>
           </View>
 
@@ -402,8 +529,18 @@ const DirectionsView = ({route, navigation}) => {
             ]}
             onPress={startNavigation}>
             <Text style={styles.startNavButtonText}>
-              {isNavigating ? 'Stop Navigation' : 'Start Navigation'}
+              {isNavigating ? 'Stop Navigation' : '▲ Start Navigation'}
             </Text>
+          </TouchableOpacity>
+
+          {/* Simulate button for testing */}
+          <TouchableOpacity
+            style={[
+              styles.startNavButton,
+              {marginTop: 10, backgroundColor: '#444'},
+            ]}
+            onPress={startSimulation}>
+            <Text style={styles.startNavButtonText}>▶ Simulate Navigation</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -460,7 +597,7 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: '#666',
+    color: '#fff',
   },
   destinationIcon: {
     width: 30,
@@ -549,6 +686,12 @@ const styles = StyleSheet.create({
   routeInfoSection: {
     marginBottom: 16,
   },
+  infoLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    marginBottom: 8,
+  },
   transportModes: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -592,14 +735,14 @@ const styles = StyleSheet.create({
     color: '#007AFF',
   },
   startNavButton: {
-    backgroundColor: '#E86B0A',
+    backgroundColor: '#0A84FF',
     borderRadius: 28,
     padding: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
   startNavButtonActive: {
-    backgroundColor: '#FF3B30',
+    backgroundColor: '#0556a7',
   },
   startNavButtonText: {
     color: '#fff',
@@ -609,4 +752,3 @@ const styles = StyleSheet.create({
 });
 
 export default DirectionsView;
-

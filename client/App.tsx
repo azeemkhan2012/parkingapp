@@ -5,7 +5,7 @@
  * @format
  */
 
-import React, {useEffect, useRef} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import 'react-native-gesture-handler';
 import LoginScreen from './src/components/loginScreen';
 import SignUpScreen from './src/components/signUpScreen';
@@ -21,7 +21,7 @@ import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {NavigationContainer} from '@react-navigation/native';
 import HomePage from './src/components/homePage';
 import {StripeProvider} from '@stripe/stripe-react-native';
-import {Alert, Linking} from 'react-native';
+import {Alert, Linking, View, Text, ActivityIndicator, StyleSheet} from 'react-native';
 import {
   bookParkingSpot,
   getCurrentUser,
@@ -49,6 +49,7 @@ const Stack = createNativeStackNavigator();
 
 function App(): React.JSX.Element {
   const navigationRef = useRef<any>(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // Global error handler to suppress URL.host errors
   useEffect(() => {
@@ -123,6 +124,9 @@ function App(): React.JSX.Element {
           console.log('[handleDeepLink] ✅ Processing successful checkout with session:', sessionId);
           console.log('[handleDeepLink] Calling handleCheckoutSuccess immediately...');
           
+          // Show loader immediately
+          setIsProcessingPayment(true);
+          
           // Call handleCheckoutSuccess - fire and forget, but log results
           // Use Promise.resolve().then() to ensure it runs asynchronously but immediately
           Promise.resolve().then(async () => {
@@ -130,22 +134,57 @@ function App(): React.JSX.Element {
               console.log('[handleDeepLink] Starting handleCheckoutSuccess...');
               await handleCheckoutSuccess(sessionId);
               console.log('[handleDeepLink] ✅ handleCheckoutSuccess completed successfully');
+              
+              // Clear checkout flag and hide loader after navigation
+              try {
+                await AsyncStorage.removeItem('checkout_in_progress');
+              } catch (e) {
+                console.warn('Failed to clear checkout flag:', e);
+              }
+              
+              // Hide loader after a short delay to ensure navigation is complete
+              setTimeout(() => {
+                setIsProcessingPayment(false);
+              }, 1000);
             } catch (err: any) {
               const errorMessage = err?.message || String(err);
               console.error('[handleDeepLink] ❌ Error in handleCheckoutSuccess:', err);
               console.error('[handleDeepLink] Error message:', errorMessage);
               console.error('[handleDeepLink] Error stack:', err?.stack);
               
+              // Clear checkout flag on error
+              try {
+                await AsyncStorage.removeItem('checkout_in_progress');
+              } catch (e) {
+                console.warn('Failed to clear checkout flag:', e);
+              }
+              
+              // Hide loader
+              setIsProcessingPayment(false);
+              
               // If it's a URL.host error, try again after a short delay
               if (errorMessage.includes('URL.host') || errorMessage.includes('URL.host is not implemented')) {
                 console.log('[handleDeepLink] URL.host error detected, retrying after 500ms...');
                 setTimeout(async () => {
                   try {
+                    setIsProcessingPayment(true);
                     console.log('[handleDeepLink] Retrying handleCheckoutSuccess...');
                     await handleCheckoutSuccess(sessionId);
                     console.log('[handleDeepLink] ✅ Retry successful');
+                    
+                    // Clear flag and hide loader
+                    try {
+                      await AsyncStorage.removeItem('checkout_in_progress');
+                    } catch (e) {
+                      console.warn('Failed to clear checkout flag:', e);
+                    }
+                    setTimeout(() => {
+                      setIsProcessingPayment(false);
+                    }, 1000);
                   } catch (retryErr: any) {
                     console.error('[handleDeepLink] ❌ Retry also failed:', retryErr);
+                    setIsProcessingPayment(false);
+                    
                     // Don't show alert for URL.host errors - just log
                     if (!retryErr?.message?.includes('URL.host')) {
                       Alert.alert(
@@ -167,6 +206,15 @@ function App(): React.JSX.Element {
           });
           } else {
             console.warn('[handleDeepLink] ⚠️ No session ID found in deep link');
+            setIsProcessingPayment(false);
+            
+            // Clear checkout flag
+            try {
+              await AsyncStorage.removeItem('checkout_in_progress');
+            } catch (e) {
+              console.warn('Failed to clear checkout flag:', e);
+            }
+            
             // Navigate to bookings - payment might have succeeded
             if (navigationRef.current) {
               navigationRef.current.navigate('Bookings');
@@ -174,6 +222,14 @@ function App(): React.JSX.Element {
           }
         } else if (eventUrl.includes('checkout/cancel')) {
           console.log('[handleDeepLink] Payment was cancelled by user');
+          
+          // Clear checkout flag and hide loader
+          setIsProcessingPayment(false);
+          try {
+            await AsyncStorage.removeItem('checkout_in_progress');
+          } catch (e) {
+            console.warn('Failed to clear checkout flag:', e);
+          }
         }
     };
 
@@ -536,6 +592,8 @@ function App(): React.JSX.Element {
         console.log('[handleCheckoutSuccess] Navigating to Bookings screen...');
         if (navigationRef.current) {
           navigationRef.current.navigate('Bookings');
+          // Wait a moment to ensure navigation completes
+          await new Promise(resolve => setTimeout(resolve, 500));
         } else {
           console.error('[handleCheckoutSuccess] Navigation ref is null!');
         }
@@ -549,7 +607,14 @@ function App(): React.JSX.Element {
         // Navigate to bookings anyway - user can check status there
         if (navigationRef.current) {
           navigationRef.current.navigate('Bookings');
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
+        
+        // Show error alert
+        Alert.alert(
+          'Booking Error',
+          result?.error || 'Booking could not be created. Please check your bookings or contact support.',
+        );
       }
       // if (result?.success) {
       //   // Get the spot data from AsyncStorage (stored before checkout)
@@ -599,6 +664,7 @@ function App(): React.JSX.Element {
       // Try to navigate to bookings anyway - booking might have been created
       if (navigationRef.current) {
         navigationRef.current.navigate('Bookings');
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
       // Re-throw so caller can handle retry if needed
@@ -609,7 +675,7 @@ function App(): React.JSX.Element {
   return (
     <NavigationContainer ref={navigationRef}>
       <StripeProvider publishableKey="pk_test_51SXKstC1HeXH2oUQuSjQMoH7zT0olUUFg0dQeZshuhyfgwc9TFi5VYyT59GJZXwAotVWnORfoa3QqYU2bEtr4A2T00ecmUBySG">
-        <Stack.Navigator screenOptions={{headerShown: true}}>
+        <Stack.Navigator screenOptions={{headerShown: false}}>
           <Stack.Screen name="login" component={LoginScreen} />
           <Stack.Screen name="signup" component={SignUpScreen} />
           <Stack.Screen
@@ -631,8 +697,59 @@ function App(): React.JSX.Element {
           />
         </Stack.Navigator>
       </StripeProvider>
+      
+      {/* Global Payment Processing Loader */}
+      {isProcessingPayment && (
+        <View style={appStyles.loaderOverlay}>
+          <View style={appStyles.loaderContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={appStyles.loaderText}>Processing payment...</Text>
+            <Text style={appStyles.loaderSubtext}>Please wait while we complete your booking</Text>
+          </View>
+        </View>
+      )}
     </NavigationContainer>
   );
 }
+
+const appStyles = StyleSheet.create({
+  loaderOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+    elevation: 9999,
+  },
+  loaderContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    minWidth: 200,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  loaderText: {
+    marginTop: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+  },
+  loaderSubtext: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+  },
+});
 
 export default App;

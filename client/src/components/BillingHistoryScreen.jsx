@@ -42,6 +42,7 @@ const BillingHistoryScreen = ({navigation}) => {
       setLoading(false);
     }
   };
+  console.log(bills, 'bills');
 
   const formatDate = date => {
     if (!date) return 'N/A';
@@ -128,7 +129,9 @@ const BillingHistoryScreen = ({navigation}) => {
           />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Billing History</Text>
-        <TouchableOpacity onPress={loadBillingHistory} style={styles.refreshButton}>
+        <TouchableOpacity
+          onPress={loadBillingHistory}
+          style={styles.refreshButton}>
           <Text style={styles.refreshText}>Refresh</Text>
         </TouchableOpacity>
       </View>
@@ -136,9 +139,7 @@ const BillingHistoryScreen = ({navigation}) => {
       {bills.length > 0 && (
         <View style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>Total Spent</Text>
-          <Text style={styles.summaryAmount}>
-            PKR {totalSpent.toFixed(2)}
-          </Text>
+          <Text style={styles.summaryAmount}>PKR {totalSpent.toFixed(2)}</Text>
           <Text style={styles.summarySubtext}>
             {bills.filter(b => b.payment_status === 'paid').length} successful
             payments
@@ -146,7 +147,9 @@ const BillingHistoryScreen = ({navigation}) => {
         </View>
       )}
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentContainer}>
         {bills.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No billing history</Text>
@@ -164,7 +167,11 @@ const BillingHistoryScreen = ({navigation}) => {
                     <View
                       style={[
                         styles.statusBadge,
-                        {backgroundColor: getPaymentStatusColor(bill.payment_status)},
+                        {
+                          backgroundColor: getPaymentStatusColor(
+                            bill.payment_status,
+                          ),
+                        },
                       ]}>
                       <Text style={styles.statusText}>
                         {bill.payment_status?.toUpperCase() || 'UNKNOWN'}
@@ -183,7 +190,7 @@ const BillingHistoryScreen = ({navigation}) => {
                   </View>
                 </View>
                 <Text style={styles.billAmount}>
-                  {bill.currency || 'PKR'} {bill.amount || 0}
+                  {'PKR'} {bill.amount || 0}
                 </Text>
               </View>
 
@@ -241,7 +248,9 @@ const BillingHistoryScreen = ({navigation}) => {
                     <Text style={styles.detailLabel}>Booking Period:</Text>
                     <Text style={styles.detailValue}>
                       {formatDate(bill.booking_start)}
-                      {bill.booking_end ? ` - ${formatDate(bill.booking_end)}` : ''}
+                      {bill.booking_end
+                        ? ` - ${formatDate(bill.booking_end)}`
+                        : ''}
                     </Text>
                   </View>
                 )}
@@ -433,4 +442,3 @@ const styles = StyleSheet.create({
 });
 
 export default BillingHistoryScreen;
-

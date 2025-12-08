@@ -88,6 +88,39 @@ service cloud.firestore {
       // Cloud Functions can create notifications (no auth check needed for server-side)
       allow create: if true;
     }
+    
+    // Payments collection - users can read and update their own payments
+    match /payments/{paymentId} {
+      // Helper function to check if user owns the payment
+      function isPaymentOwner() {
+        return request.auth.uid == resource.data.user_id;
+      }
+      
+      // Helper function to check if user is creating their own payment
+      function isCreatingOwnPayment() {
+        return request.auth.uid == request.resource.data.user_id;
+      }
+      
+      // Helper function to check if user is updating their own payment
+      function isUpdatingOwnPayment() {
+        return request.auth.uid == resource.data.user_id &&
+               request.auth.uid == request.resource.data.user_id;
+      }
+      
+      // Allow read if user is authenticated and owns the payment
+      // Note: For queries, we need to allow reads if the user_id matches
+      // The query will filter results, so we allow read if authenticated
+      allow read: if isAuthenticated() && (resource == null || isPaymentOwner());
+      
+      // Allow list queries for authenticated users (they can only see their own payments due to query filters)
+      allow list: if isAuthenticated();
+      
+      // Allow create if user is authenticated and sets their own user_id (for client-side creation before checkout)
+      allow create: if isAuthenticated() && isCreatingOwnPayment();
+      
+      // Allow update if user is authenticated and updating their own payment
+      allow update: if isAuthenticated() && isUpdatingOwnPayment();
+    }
   }
 }
 

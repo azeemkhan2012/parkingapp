@@ -211,9 +211,27 @@ const BillingHistoryScreen = ({navigation}) => {
 
                 {bill.session_id && (
                   <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Transaction ID:</Text>
+                    <Text style={styles.detailLabel}>Session ID:</Text>
                     <Text style={[styles.detailValue, styles.transactionId]}>
                       {bill.session_id.substring(0, 20)}...
+                    </Text>
+                  </View>
+                )}
+
+                {bill.payment_intent_id && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Payment Intent:</Text>
+                    <Text style={[styles.detailValue, styles.transactionId]}>
+                      {bill.payment_intent_id.substring(0, 20)}...
+                    </Text>
+                  </View>
+                )}
+
+                {bill.paid_at && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Paid At:</Text>
+                    <Text style={styles.detailValue}>
+                      {formatDate(bill.paid_at)}
                     </Text>
                   </View>
                 )}

@@ -9,12 +9,20 @@ import {
   Alert,
   Image,
 } from 'react-native';
+import {useFocusEffect} from '@react-navigation/native';
 import {getUserBookings, cancelBooking, getCurrentUser} from '../config/firebase';
 
 const BookingsScreen = ({navigation}) => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState(null);
+
+  // Load bookings when screen comes into focus (e.g., after payment)
+  useFocusEffect(
+    React.useCallback(() => {
+      loadBookings();
+    }, []),
+  );
 
   useEffect(() => {
     loadBookings();
@@ -30,15 +38,43 @@ const BookingsScreen = ({navigation}) => {
         return;
       }
 
+      console.log('[BookingsScreen] Loading bookings for user:', currentUser.uid);
       const result = await getUserBookings(currentUser.uid);
+      console.log('[BookingsScreen] Bookings result:', result);
+      
       if (result.success) {
+        console.log('[BookingsScreen] Found bookings:', result.bookings?.length || 0);
+        
+        // Log booking data for debugging
+        if (result.bookings && result.bookings.length > 0) {
+          result.bookings.forEach((booking, index) => {
+            console.log(`[BookingsScreen] Booking ${index + 1}:`, {
+              id: booking.id,
+              spot_name: booking.spot_name,
+              status: booking.status,
+              payment_status: booking.payment_status,
+              hasLatitude: !!booking.spot_latitude,
+              hasLongitude: !!booking.spot_longitude,
+              hasAddress: !!booking.spot_address,
+              latitude: booking.spot_latitude,
+              longitude: booking.spot_longitude,
+            });
+          });
+        }
+        
         setBookings(result.bookings || []);
+        
+        if (result.bookings && result.bookings.length === 0) {
+          console.log('[BookingsScreen] No bookings found. Checking Firestore directly...');
+        }
       } else {
+        console.error('[BookingsScreen] Failed to load bookings:', result.error);
         Alert.alert('Error', result.error || 'Failed to load bookings');
       }
     } catch (error) {
-      console.error('Error loading bookings:', error);
-      Alert.alert('Error', 'Failed to load bookings');
+      console.error('[BookingsScreen] Error loading bookings:', error);
+      console.error('[BookingsScreen] Error stack:', error.stack);
+      Alert.alert('Error', `Failed to load bookings: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -78,7 +114,22 @@ const BookingsScreen = ({navigation}) => {
   const formatDate = date => {
     if (!date) return 'N/A';
     if (typeof date === 'string') return date;
+    
+    // Handle numeric timestamps (milliseconds since epoch)
+    if (typeof date === 'number') {
+      return new Date(date).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+    
+    // Handle Firestore Timestamp objects
     if (date.toDate) date = date.toDate();
+    
+    // Handle Date objects
     if (date instanceof Date) {
       return date.toLocaleDateString('en-US', {
         year: 'numeric',
@@ -88,6 +139,7 @@ const BookingsScreen = ({navigation}) => {
         minute: '2-digit',
       });
     }
+    
     return 'N/A';
   };
 
@@ -217,21 +269,57 @@ const BookingsScreen = ({navigation}) => {
                 </View>
               </View>
 
-              {booking.status === 'active' && (
-                <TouchableOpacity
-                  style={[
-                    styles.cancelButton,
-                    cancellingId === booking.id && styles.cancelButtonDisabled,
-                  ]}
-                  onPress={() => handleCancelBooking(booking.id)}
-                  disabled={cancellingId === booking.id}>
-                  {cancellingId === booking.id ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.cancelButtonText}>Cancel Booking</Text>
-                  )}
-                </TouchableOpacity>
-              )}
+              <View style={styles.actionButtonsContainer}>
+                {/* Get Direction button - show if booking has coordinates */}
+                {booking.spot_latitude && booking.spot_longitude ? (
+                  <TouchableOpacity
+                    style={styles.navigateButton}
+                    onPress={() => {
+                      console.log('[BookingsScreen] Get Direction pressed for booking:', booking.id);
+                      console.log('[BookingsScreen] Booking coordinates:', {
+                        latitude: booking.spot_latitude,
+                        longitude: booking.spot_longitude,
+                        spotName: booking.spot_name,
+                      });
+                      navigation.navigate('home', {
+                        bookingLocation: {
+                          latitude: booking.spot_latitude,
+                          longitude: booking.spot_longitude,
+                          spotName: booking.spot_name,
+                          spotAddress: booking.spot_address,
+                          startNavigation: true, // Flag to start navigation automatically
+                        },
+                      });
+                    }}>
+                    <Image
+                      source={require('../assets/navigate.png')}
+                      style={styles.buttonIcon}
+                    />
+                    <Text style={styles.navigateButtonText}>Get Direction</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.noLocationContainer}>
+                    <Text style={styles.noLocationText}>Location not available</Text>
+                  </View>
+                )}
+
+                {/* Cancel button - only for active bookings */}
+                {booking.status === 'active' && (
+                  <TouchableOpacity
+                    style={[
+                      styles.cancelButton,
+                      cancellingId === booking.id && styles.cancelButtonDisabled,
+                    ]}
+                    onPress={() => handleCancelBooking(booking.id)}
+                    disabled={cancellingId === booking.id}>
+                    {cancellingId === booking.id ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.cancelButtonText}>Cancel Booking</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           ))
         )}
@@ -385,8 +473,59 @@ const styles = StyleSheet.create({
     color: '#333',
     flex: 1,
   },
-  cancelButton: {
+  actionButtonsContainer: {
     marginTop: 12,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  viewMapButton: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 8,
+    tintColor: '#fff',
+  },
+  viewMapButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  navigateButton: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navigateButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  noLocationContainer: {
+    flex: 1,
+    padding: 12,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noLocationText: {
+    color: '#999',
+    fontSize: 14,
+  },
+  cancelButton: {
+    flex: 1,
     padding: 12,
     backgroundColor: '#F44336',
     borderRadius: 8,

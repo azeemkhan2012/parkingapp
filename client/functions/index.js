@@ -38,7 +38,7 @@ exports.createCheckoutSession = onRequest(
         line_items: [
           {
             price_data: {
-              currency: 'PKR', // FIX: Stripe does NOT support PKR
+              currency: 'usd', // Stripe does NOT support PKR, using USD
               product_data: {
                 name: name || 'Parking Spot Booking',
               },
@@ -59,7 +59,10 @@ exports.createCheckoutSession = onRequest(
         cancel_url: 'parkingapp://checkout/cancel',
       });
 
-      return res.json({ url: session.url });
+      return res.json({ 
+        url: session.url,
+        sessionId: session.id, // Return session ID for payment record creation
+      });
     } catch (err) {
       console.error('createCheckoutSession error:', err);
       return res.status(500).json({ error: err.message });
@@ -87,7 +90,14 @@ exports.verifyCheckoutSession = onRequest(
         expand: ['payment_intent'],
       });
 
-      const paid = session.payment_status === 'paid';
+      // Check payment status - for test mode, also accept 'complete' status
+      const paid = session.payment_status === 'paid' || 
+                  session.payment_status === 'complete' ||
+                  (session.payment_intent && session.payment_intent.status === 'succeeded');
+
+      console.log('[verifyCheckoutSession] Session payment_status:', session.payment_status);
+      console.log('[verifyCheckoutSession] Payment intent status:', session.payment_intent?.status);
+      console.log('[verifyCheckoutSession] Paid:', paid);
 
       res.json({
         paid,
@@ -95,7 +105,8 @@ exports.verifyCheckoutSession = onRequest(
         userId: session.metadata?.userId || null,
         email: session.customer_email || null,
         amount: session.amount_total ? session.amount_total / 100 : null, // Convert cents to regular amount
-        currency: session.currency || 'PKR',
+        currency: session.currency || 'usd',
+        payment_status: session.payment_status, // Include payment status for debugging
       });
     } catch (err) {
       console.error('verifyCheckoutSession error:', err);
@@ -103,6 +114,7 @@ exports.verifyCheckoutSession = onRequest(
     }
   }
 );
+
 
 // -------------------- Notification Functions --------------------
 

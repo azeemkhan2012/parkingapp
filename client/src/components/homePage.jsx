@@ -22,8 +22,12 @@ import {
   saveParkingSpotForLater,
   deleteFCMToken as deleteFCMTokenFromFirestore,
   saveFCMToken,
+  createPaymentRecord,
 } from '../config/firebase';
-import {deleteFCMToken as deleteLocalFCMToken, initializeFCM} from '../utils/notifications';
+import {
+  deleteFCMToken as deleteLocalFCMToken,
+  initializeFCM,
+} from '../utils/notifications';
 import {collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
 import NearbyParkingModal from './NearbyParkingModal';
@@ -93,6 +97,7 @@ const HomePage = ({navigation}) => {
   const [destinationCoords, setDestinationCoords] = useState([24.8021, 67.03]);
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
   const [userLocation, setUserLocation] = useState(null);
+  const pendingNavigationRef = React.useRef(null); // Track pending navigation request
   const [selectedRouteProfile, setselectedRouteProfile] = useState('driving');
   const [selectedTransportMode, setSelectedTransportMode] = useState('bike'); // 'car', 'bus', 'walking'
   const [routeDirections, setRouteDirections] = useState(null);
@@ -114,6 +119,7 @@ const HomePage = ({navigation}) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [isBookingLoading, setIsBookingLoading] = useState(false);
 
   async function getPermissionLocation() {
     try {
@@ -152,7 +158,7 @@ const HomePage = ({navigation}) => {
   useEffect(() => {
     getPermissionLocation();
     if (selectedRouteProfile !== null) {
-      createRouterLine(userLocation, selectedRouteProfile);
+      // createRouterLine(userLocation, selectedRouteProfile);
     }
   }, [selectedRouteProfile]);
 
@@ -196,7 +202,49 @@ const HomePage = ({navigation}) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Handle navigation from notifications
+  // Check for checkout completion when component mounts or becomes focused
+  useEffect(() => {
+    const checkCheckoutStatus = async () => {
+      try {
+        const checkoutInProgress = await AsyncStorage.getItem(
+          'checkout_in_progress',
+        );
+        if (checkoutInProgress === 'true') {
+          // Checkout was in progress, but user might have returned
+          // Check if it was completed (flag would be cleared by App.tsx)
+          // If still set, keep loader visible
+          setIsBookingLoading(true);
+        } else {
+          setIsBookingLoading(false);
+        }
+      } catch (e) {
+        console.warn('Error checking checkout status:', e);
+        setIsBookingLoading(false);
+      }
+    };
+
+    checkCheckoutStatus();
+
+    // Also check when screen is focused (user returns from Stripe)
+    const unsubscribe = navigation.addListener('focus', () => {
+      checkCheckoutStatus();
+    });
+
+    // Poll periodically if loader is visible (in case user stays on home page)
+    let intervalId = null;
+    if (isBookingLoading) {
+      intervalId = setInterval(checkCheckoutStatus, 1000); // Check every second
+    }
+
+    return () => {
+      unsubscribe();
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [navigation, isBookingLoading]);
+
+  // Handle navigation from notifications and bookings
   useEffect(() => {
     const params = route.params;
     if (params?.openSavedSpot && params?.savedSpotId) {
@@ -206,7 +254,126 @@ const HomePage = ({navigation}) => {
       // Clear params to avoid reopening on subsequent navigations
       navigation.setParams({openSavedSpot: undefined, savedSpotId: undefined});
     }
+
+    // Handle navigation from bookings to map location
+    if (params?.bookingLocation) {
+      const {latitude, longitude, spotName, spotAddress, startNavigation} =
+        params.bookingLocation;
+
+      if (latitude && longitude) {
+        // Update destination coordinates
+        setDestinationCoords([longitude, latitude]);
+        setZoom(15);
+
+        // Set search text to spot name or address
+        if (spotName) {
+          setSearch(spotName);
+        } else if (spotAddress) {
+          setSearch(spotAddress);
+        }
+
+        // Move camera to booking location
+        if (cameraRef.current) {
+          try {
+            cameraRef.current.setCamera({
+              centerCoordinate: [longitude, latitude],
+              zoomLevel: 15,
+              animationMode: 'flyTo',
+              animationDuration: 1000,
+            });
+          } catch (e) {
+            console.warn('Camera update error:', e);
+          }
+        }
+
+        // If startNavigation flag is set, store navigation request and wait for user location
+        if (startNavigation) {
+          console.log(
+            '[homePage] 🧭 Navigation requested to booking location...',
+          );
+          console.log('[homePage] User location available:', !!userLocation);
+          console.log('[homePage] Destination:', {latitude, longitude});
+          console.log('[homePage] Route profile:', selectedRouteProfile);
+
+          // Store navigation request
+          pendingNavigationRef.current = {
+            destination: {latitude, longitude},
+            routeProfile: selectedRouteProfile,
+            timestamp: Date.now(),
+          };
+
+          // If location is already available, start navigation after a short delay
+          // (Navigation will be started by useEffect when userLocation is available)
+          if (userLocation) {
+            console.log(
+              '[homePage] ✅ User location available, will start navigation shortly...',
+            );
+          } else {
+            console.log('[homePage] ⏳ Waiting for user location...');
+          }
+        }
+
+        // Clear params to avoid re-navigating on subsequent visits
+        navigation.setParams({bookingLocation: undefined});
+      }
+    }
   }, [route.params, navigation]);
+
+  // Function to start pending navigation when location becomes available
+  const startPendingNavigation = React.useCallback(async currentLocation => {
+    const pending = pendingNavigationRef.current;
+    if (!pending) return;
+
+    // Check if request is too old (more than 30 seconds)
+    if (Date.now() - pending.timestamp > 30000) {
+      console.log('[homePage] ⏰ Navigation request expired, clearing...');
+      pendingNavigationRef.current = null;
+      return;
+    }
+
+    if (!currentLocation || typeof currentLocation.latitude !== 'number') {
+      console.error('[homePage] ❌ Invalid user location:', currentLocation);
+      return;
+    }
+
+    try {
+      console.log(
+        '[homePage] ✅ Starting navigation with location:',
+        currentLocation,
+      );
+      console.log('[homePage] Destination:', pending.destination);
+      // Create route from user location to booking destination with auto-start
+      await createRouterLineToDestination(
+        currentLocation,
+        pending.destination,
+        pending.routeProfile,
+        true, // autoStartNavigation = true
+      );
+      // Clear pending navigation after successful start
+      pendingNavigationRef.current = null;
+    } catch (error) {
+      console.error('[homePage] ❌ Error starting navigation:', error);
+      console.error('[homePage] Error details:', {
+        message: error?.message,
+        stack: error?.stack,
+      });
+      Alert.alert(
+        'Navigation Error',
+        error?.message || 'Failed to start navigation. Please try again.',
+      );
+      pendingNavigationRef.current = null;
+    }
+  }, []);
+
+  // Watch for userLocation changes and start pending navigation
+  React.useEffect(() => {
+    if (userLocation && pendingNavigationRef.current) {
+      console.log(
+        '[homePage] 📍 User location available, starting pending navigation...',
+      );
+      startPendingNavigation(userLocation);
+    }
+  }, [userLocation, startPendingNavigation]);
 
   const findNearbyParking = async () => {
     if (!userLocation) {
@@ -221,10 +388,14 @@ const HomePage = ({navigation}) => {
     try {
       // Fetch all parking spots from Firestore
       const snapshot = await getDocs(collection(db, 'parking_spots'));
-      const allSpots = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const allSpots = snapshot.docs.map(doc => {
+        const data = doc.data();
+        // Ensure the document ID is always used, even if data contains an id field
+        return {
+          ...data,
+          id: doc.id, // Always use the Firestore document ID
+        };
+      });
 
       // Filter spots that have valid coordinates
       const validSpots = allSpots.filter(spot => {
@@ -248,14 +419,24 @@ const HomePage = ({navigation}) => {
       setLoadingNearby(false);
     }
   };
-const currentUser = getCurrentUser();
-console.log(currentUser,'currentUser');
+  const currentUser = getCurrentUser();
+  console.log(currentUser, 'currentUser');
 
   async function startCheckout(spot) {
+    // Show loader immediately
+    setIsBookingLoading(true);
+
     try {
       const currentUser = getCurrentUser();
+      if (!currentUser) {
+        setIsBookingLoading(false);
+        Alert.alert('Login Required', 'Please login to book a parking spot.');
+        return;
+      }
+
       const hourlyRate = spot.pricing_hourly;
-      const amountCents = hourlyRate * 100; // 40 USD cents → $0.40 (for testing)
+      const amountCents = hourlyRate * 100; // Convert to cents
+      const currency = 'usd'; // Stripe doesn't support PKR, using USD
 
       // Store spot data in AsyncStorage before checkout for retrieval after payment
       try {
@@ -264,6 +445,14 @@ console.log(currentUser,'currentUser');
         console.warn('Failed to store spot data:', storageErr);
       }
 
+      // Store flag to indicate checkout is in progress (for App.tsx to show loader on return)
+      try {
+        await AsyncStorage.setItem('checkout_in_progress', 'true');
+      } catch (storageErr) {
+        console.warn('Failed to store checkout flag:', storageErr);
+      }
+
+      // Create checkout session first to get session ID
       const response = await fetch(
         `https://us-central1-parking-app-1cb84.cloudfunctions.net/createCheckoutSession`,
         {
@@ -272,27 +461,190 @@ console.log(currentUser,'currentUser');
           body: JSON.stringify({
             amount: amountCents,
             spotId: spot.id,
-            userId: currentUser?.uid || null,
-            email: currentUser?.email || '',
+            userId: currentUser.uid,
+            email: currentUser.email || '',
             name: spot.name || 'Parking Spot Booking',
           }),
         },
       );
 
       const data = await response.json();
+      console.log('[startCheckout] Cloud function response:', data);
+
       if (!response.ok || !data.url) {
         throw new Error(data.error || 'Failed to create checkout session');
       }
 
+      // Check if sessionId is returned (new version) or use session ID from URL
+      let sessionId = data.sessionId;
+      console.log('[startCheckout] SessionId from response:', sessionId);
+      if (!sessionId && data.url) {
+        // Extract session ID from Stripe checkout URL as fallback
+        const urlMatch = data.url.match(/\/cs_test_([a-zA-Z0-9]+)/);
+        if (urlMatch) {
+          sessionId = `cs_test_${urlMatch[1]}`;
+          console.log('Extracted session ID from URL:', sessionId);
+        }
+      }
+
+      if (!sessionId) {
+        console.warn(
+          'Warning: No session ID available. Payment record will not be created.',
+        );
+        // Still open checkout, but payment record won't be created
+        await Linking.openURL(data.url);
+        return;
+      }
+
+      // Log to AsyncStorage for persistence (survives dev tools disconnect)
+      const logData = {
+        timestamp: new Date().toISOString(),
+        sessionId,
+        userId: currentUser.uid,
+        spotId: spot.id,
+        amount: amountCents,
+        status: 'attempting',
+      };
+      try {
+        await AsyncStorage.setItem(
+          'last_payment_attempt',
+          JSON.stringify(logData),
+        );
+      } catch (e) {
+        console.warn('Failed to save payment attempt log:', e);
+      }
+
+      console.log(
+        '[startCheckout] Creating payment record with session ID:',
+        sessionId,
+      );
+      console.log('[startCheckout] User ID:', currentUser.uid);
+      console.log('[startCheckout] Spot ID:', spot.id);
+      console.log('[startCheckout] Amount (cents):', amountCents);
+
+      // Create payment record before opening checkout
+      // This ensures we track all payment attempts, even if user doesn't complete payment
+      let paymentResult = null;
+      try {
+        paymentResult = await createPaymentRecord(
+          currentUser.uid,
+          spot.id,
+          sessionId,
+          amountCents,
+          currency,
+          {
+            spot_name: spot.name || 'Parking Spot',
+            spot_address: spot.address || 'Address not available',
+          },
+        );
+
+        if (!paymentResult.success) {
+          console.error(
+            '[startCheckout] ❌ Failed to create payment record:',
+            paymentResult.error,
+          );
+          console.error(
+            '[startCheckout] Error details:',
+            JSON.stringify(paymentResult, null, 2),
+          );
+
+          // Update log with failure
+          logData.status = 'failed';
+          logData.error = paymentResult.error;
+          await AsyncStorage.setItem(
+            'last_payment_attempt',
+            JSON.stringify(logData),
+          );
+
+          // Payment record creation failed - log but continue
+          console.warn(
+            '[startCheckout] Payment record creation failed, but continuing with checkout',
+          );
+          // Continue with checkout even if payment record creation fails
+          // Booking will be created after successful payment
+        } else {
+          console.log(
+            '[startCheckout] ✅ Payment record created successfully!',
+          );
+          console.log('[startCheckout] Payment ID:', paymentResult.paymentId);
+
+          // Update log with success
+          logData.status = 'success';
+          logData.paymentId = paymentResult.paymentId;
+          await AsyncStorage.setItem(
+            'last_payment_attempt',
+            JSON.stringify(logData),
+          );
+
+          // Also store for easy checking
+          await AsyncStorage.setItem(
+            `payment_${sessionId}`,
+            paymentResult.paymentId,
+          );
+        }
+      } catch (error) {
+        console.error(
+          '[startCheckout] ❌ Exception creating payment record:',
+          error,
+        );
+        console.error('[startCheckout] Error stack:', error.stack);
+
+        // Update log with exception
+        logData.status = 'exception';
+        logData.error = error.message;
+        await AsyncStorage.setItem(
+          'last_payment_attempt',
+          JSON.stringify(logData),
+        );
+
+        // Log error but continue with checkout
+        console.error(
+          '[startCheckout] Exception creating payment record, but continuing:',
+          error,
+        );
+      }
+
+      // Store payment ID for later reference (only if payment was created successfully)
+      if (paymentResult && paymentResult.success && paymentResult.paymentId) {
+        try {
+          await AsyncStorage.setItem(
+            `payment_${sessionId}`,
+            paymentResult.paymentId,
+          );
+        } catch (storageErr) {
+          console.warn('Failed to store payment ID:', storageErr);
+        }
+      }
+
       // Open Stripe Checkout in browser
+      console.log('[startCheckout] Opening Stripe checkout URL...');
       await Linking.openURL(data.url);
+      console.log(
+        '[startCheckout] Checkout opened. Payment record status logged to AsyncStorage.',
+      );
+
+      // Keep loader visible - it will be hidden when user returns from Stripe
+      // The loader will be managed by App.tsx when deep link is received
     } catch (err) {
       console.error('startCheckout error:', err);
-      Alert.alert('Error', err.message || 'Unable to start checkout');
+      setIsBookingLoading(false);
+
+      // Clear checkout flag on error
+      try {
+        await AsyncStorage.removeItem('checkout_in_progress');
+      } catch (e) {
+        console.warn('Failed to clear checkout flag:', e);
+      }
+
+      Alert.alert(
+        'Error',
+        err.message || 'Unable to start checkout. Please try again.',
+      );
     }
   }
 
   const handleBookNow = spot => {
+    setShowNearbyModal(false);
     startCheckout(spot);
   };
 
@@ -354,7 +706,7 @@ console.log(currentUser,'currentUser');
       );
       const data = await resp.json();
       let latitude, longitude;
-      
+
       if (Array.isArray(data) && data.length > 0) {
         const item = data[0];
         latitude = parseFloat(item.lat);
@@ -367,15 +719,15 @@ console.log(currentUser,'currentUser');
         Alert.alert('Not found', 'Could not find that address.');
         return;
       }
-      
+
       // Update location state
       const newLocation = {latitude, longitude};
       setUserLocation(newLocation);
-      
+
       // Set destination coords to show the parking icon at searched location
       setDestinationCoords([longitude, latitude]);
       setZoom(15);
-      
+
       // Immediately move camera to the geocoded location
       if (cameraRef.current) {
         try {
@@ -419,49 +771,134 @@ console.log(currentUser,'currentUser');
     return routerFeature;
   }
 
-  async function createRouterLine(coords, routeProfile) {
-    const startCoords = `${coords.longitude},${coords.latitude}`;
+  // Create route to a specific destination
+  async function createRouterLineToDestination(
+    startCoords,
+    destination,
+    routeProfile,
+    autoStartNavigation = false,
+  ) {
+    // Validate inputs
+    if (
+      !startCoords ||
+      typeof startCoords.latitude !== 'number' ||
+      typeof startCoords.longitude !== 'number'
+    ) {
+      console.error('[homePage] ❌ Invalid start coordinates:', startCoords);
+      throw new Error(
+        'Invalid start location. Please enable location services.',
+      );
+    }
 
-    const endCoords = `${['67.03005', '24.80234']}`;
+    if (
+      !destination ||
+      typeof destination.latitude !== 'number' ||
+      typeof destination.longitude !== 'number'
+    ) {
+      console.error(
+        '[homePage] ❌ Invalid destination coordinates:',
+        destination,
+      );
+      throw new Error('Invalid destination location.');
+    }
+
+    const start = `${startCoords.longitude},${startCoords.latitude}`;
+    const end = `${destination.longitude},${destination.latitude}`;
     const geometries = 'geojson';
-    const url = `https://api.mapbox.com/directions/v5/mapbox/${routeProfile}/${startCoords};${endCoords}?alternatives=true&geometries=${geometries}&steps=true&banner_instructions=true&overview=full&voice_instructions=true&access_token=${APIKEY}`;
+    const url = `https://api.mapbox.com/directions/v5/mapbox/${routeProfile}/${start};${end}?alternatives=true&geometries=${geometries}&steps=true&banner_instructions=true&overview=full&voice_instructions=true&access_token=${APIKEY}`;
+
+    console.log(
+      '[homePage] Creating route from:',
+      start,
+      'to:',
+      end,
+      'profile:',
+      routeProfile,
+    );
 
     try {
       let response = await fetch(url);
       let json = await response.json();
 
-      const data = json?.routes.map(data => {
-        setDistance((data.distance / 1000).toFixed(1));
-        // Convert duration from seconds to hours and minutes
-        const totalSeconds = data.duration;
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        if (hours > 0) {
-          setDuration(`${hours}H ${minutes} MIN`);
-        } else {
-          setDuration(`${minutes} MIN`);
+      if (!json.routes || !json.routes[0]) {
+        console.error('[homePage] ❌ No route found in response:', json);
+        if (json.code && json.message) {
+          throw new Error(`Route error: ${json.message}`);
         }
-      });
+        throw new Error(
+          'No route found. Please check your start and destination locations.',
+        );
+      }
 
-      let coordinates = json['routes'][0]['geometry']['coordinates'];
-      let destinationCoordinates =
-        json['routes'][0]['geometry']['coordinates'].slice(-1)[0];
+      const routeData = json.routes[0];
+      setDistance((routeData.distance / 1000).toFixed(1));
+
+      // Convert duration from seconds to hours and minutes
+      const totalSeconds = routeData.duration;
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      if (hours > 0) {
+        setDuration(`${hours}H ${minutes} MIN`);
+      } else {
+        setDuration(`${minutes} MIN`);
+      }
+
+      let coordinates = routeData.geometry.coordinates;
+      let destinationCoordinates = coordinates.slice(-1)[0];
       let steps = json.routes[0].legs[0].steps;
-      console.log(destinationCoordinates, 'destinationCoordinates');
+
+      console.log('[homePage] Route created successfully:', {
+        distance: (routeData.distance / 1000).toFixed(1) + ' km',
+        duration: `${hours}H ${minutes} MIN`,
+        steps: steps.length,
+        destinationCoordinates,
+      });
 
       setCurrentStep(steps);
       setRouteSteps(steps);
       setDestinationCoords(destinationCoordinates);
+
       if (coordinates.length) {
         const routerFeature = makeRouterFeature([...coordinates]);
         setRouteDirections(routerFeature);
+
+        // Start navigation automatically if requested
+        if (autoStartNavigation) {
+          setTimeout(() => {
+            setIsNavigating(true);
+            console.log('[homePage] ✅ Navigation started successfully');
+          }, 300);
+        }
       }
       setLoading(false);
     } catch (e) {
       setLoading(false);
-      console.log(e);
+      console.error('[homePage] ❌ Error creating route:', e);
+      Alert.alert(
+        'Navigation Error',
+        'Failed to create route. Please try again.',
+      );
     }
   }
+
+  // Consolidated route creation - uses createRouterLineToDestination internally
+  // async function createRouterLine(coords, routeProfile) {
+  //   // Check if coords are valid
+  //   if (!coords || !coords.latitude || !coords.longitude) {
+  //     console.error('[homePage] ❌ Invalid coordinates for route creation:', coords);
+  //     Alert.alert('Location Error', 'Current location is not available. Please enable location services.');
+  //     return;
+  //   }
+
+  //   // Default destination (can be overridden by destinationCoords state)
+  //   const defaultDestination = {latitude: 24.80234, longitude: 67.03005};
+  //   const destination = destinationCoords && destinationCoords.length === 2
+  //     ? {latitude: destinationCoords[1], longitude: destinationCoords[0]}
+  //     : defaultDestination;
+
+  //   console.log('[homePage] createRouterLine called with:', {coords, destination, routeProfile});
+  //   await createRouterLineToDestination(coords, destination, routeProfile, false); // false = don't auto-start navigation
+  // }
 
   const fetchSuggestions = async text => {
     if (!text.trim()) {
@@ -513,24 +950,24 @@ console.log(currentUser,'currentUser');
     // Close suggestions immediately to prevent conflicts
     setSuggestions([]);
     setShowSuggestions(false);
-    
+
     // If we have explicit coordinates, use them. Otherwise fall back to geocoding by name.
     if (item && item.lat != null && item.lon != null) {
       const lat = Number(item.lat);
       const lon = Number(item.lon);
-      
+
       // Update location state
       const newLocation = {
         latitude: lat,
         longitude: lon,
       };
       setUserLocation(newLocation);
-      
+
       // Set destination coords to show the parking icon at searched location
       setDestinationCoords([lon, lat]);
       setZoom(15);
       setSearch(item.place_name || (item.raw && item.raw.display_name) || '');
-      
+
       // Immediately move camera to the selected location
       if (cameraRef.current) {
         try {
@@ -591,7 +1028,7 @@ console.log(currentUser,'currentUser');
   const handleLogout = async () => {
     try {
       const currentUser = getCurrentUser();
-      
+
       // Delete FCM token before logout
       if (currentUser) {
         try {
@@ -707,7 +1144,12 @@ console.log(currentUser,'currentUser');
                 }
               }
             }}>
-            <Text style={styles.bellIcon}>🔔</Text>
+            <Text style={styles.bellIcon}>
+              <Image
+                source={require('../assets/notification.png')}
+                style={styles.iconButtonImage}
+              />
+            </Text>
             {unreadCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>
@@ -931,10 +1373,7 @@ console.log(currentUser,'currentUser');
         style={{flex: 1}}
         rotateEnabled={true}
         styleURL="mapbox://styles/mapbox/navigation-night-v1"
-        zoomEnabled={true}
-        onDidFinishLoadingMap={async () => {
-          await createRouterLine(userLocation, selectedRouteProfile);
-        }}>
+        zoomEnabled={true}>
         <MapboxGL.Camera
           ref={cameraRef}
           zoomLevel={zoom}
@@ -1038,6 +1477,17 @@ console.log(currentUser,'currentUser');
           }
         }}
       />
+
+      {/* Booking Loader Overlay */}
+      {isBookingLoading && (
+        <View style={styles.loaderOverlay}>
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loaderText}>Processing booking...</Text>
+            <Text style={styles.loaderSubtext}>Please wait</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 };
@@ -1161,7 +1611,7 @@ const styles = StyleSheet.create({
     zIndex: 3,
     borderRadius: 8,
     padding: 4,
-    display:'flex',
+    display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1270,7 +1720,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   bellIcon: {
-    fontSize: 22,
+    width: '25',
+    height: '25',
   },
   iconButtonImage: {
     width: '100%',
@@ -1748,6 +2199,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 1,
+  },
+  loaderOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+    elevation: 9999,
+  },
+  loaderContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    minWidth: 200,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  loaderText: {
+    marginTop: 16,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+  },
+  loaderSubtext: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
   },
 });
 

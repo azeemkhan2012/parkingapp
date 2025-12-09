@@ -288,6 +288,8 @@ const BookingsScreen = ({navigation}) => {
                           spotName: booking.spot_name,
                           spotAddress: booking.spot_address,
                           startNavigation: true, // Flag to start navigation automatically
+                          spotId: booking.spot_id, // For review submission
+                          bookingId: booking.id, // For review submission
                         },
                       });
                     }}>

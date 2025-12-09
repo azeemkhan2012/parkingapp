@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
+import ReviewFormModal from './ReviewFormModal';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -34,6 +35,10 @@ const APIKEY =
 const DirectionsView = ({route, navigation}) => {
   const {bookingLocation} = route.params || {};
   const destinationCoords = bookingLocation;
+  // Extract spot and booking info for review
+  const spotId = bookingLocation?.spotId;
+  const bookingId = bookingLocation?.bookingId;
+  const spotName = bookingLocation?.spotName;
 
   const [currentLocation, setCurrentLocation] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -46,6 +51,7 @@ const DirectionsView = ({route, navigation}) => {
   const [currentStep, setCurrentStep] = useState(null);
   const [selectedRouteProfile, setSelectedRouteProfile] = useState('driving');
   const [zoom, setZoom] = useState(12);
+  const [showReviewForm, setShowReviewForm] = useState(false);
 
   const cameraRef = useRef(null);
   const simIntervalRef = useRef(null); // interval ref for simulation
@@ -255,7 +261,17 @@ const DirectionsView = ({route, navigation}) => {
       );
 
       if (destDistance < 20) {
-        Alert.alert('Arrived!', 'You reached your destination.');
+        Alert.alert('Arrived!', 'You reached your destination.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Show review form if we have spot/booking info
+              if (spotId || bookingId) {
+                setShowReviewForm(true);
+              }
+            },
+          },
+        ]);
         setIsNavigating(false);
         setIsSimulating(false);
         setCurrentStep([]);
@@ -275,7 +291,17 @@ const DirectionsView = ({route, navigation}) => {
         updatedSteps.shift();
 
         if (updatedSteps.length === 0) {
-          Alert.alert('Arrived!', 'You reached your destination.');
+          Alert.alert('Arrived!', 'You reached your destination.', [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Show review form if we have spot/booking info
+                if (spotId || bookingId) {
+                  setShowReviewForm(true);
+                }
+              },
+            },
+          ]);
           setIsNavigating(false);
           setIsSimulating(false);
           stopSimulation();
@@ -317,7 +343,17 @@ const DirectionsView = ({route, navigation}) => {
     simIntervalRef.current = setInterval(() => {
       if (index >= routeCoords.length) {
         stopSimulation();
-        Alert.alert('Arrived!', 'You reached your destination (simulation).');
+        Alert.alert('Arrived!', 'You reached your destination (simulation).', [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Show review form if we have spot/booking info
+              if (spotId || bookingId) {
+                setShowReviewForm(true);
+              }
+            },
+          },
+        ]);
         setIsNavigating(false);
         setIsSimulating(false);
         return;
@@ -543,6 +579,22 @@ const DirectionsView = ({route, navigation}) => {
             <Text style={styles.startNavButtonText}>▶ Simulate Navigation</Text>
           </TouchableOpacity>
         </View>
+      )}
+
+      {/* Review Form Modal - shown after navigation completion */}
+      {(spotId || bookingId) && (
+        <ReviewFormModal
+          visible={showReviewForm}
+          onClose={() => {
+            setShowReviewForm(false);
+          }}
+          spotId={spotId}
+          spotName={spotName}
+          bookingId={bookingId}
+          onReviewSubmitted={() => {
+            setShowReviewForm(false);
+          }}
+        />
       )}
     </View>
   );

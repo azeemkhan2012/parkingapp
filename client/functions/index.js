@@ -38,7 +38,7 @@ exports.createCheckoutSession = onRequest(
         line_items: [
           {
             price_data: {
-              currency: 'usd', // Stripe does NOT support PKR, using USD
+              currency: 'PKR', // Stripe does NOT support PKR, using USD
               product_data: {
                 name: name || 'Parking Spot Booking',
               },

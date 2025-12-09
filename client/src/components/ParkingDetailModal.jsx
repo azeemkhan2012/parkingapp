@@ -14,6 +14,7 @@ import {
   getReviewCount,
 } from '../utils/parkingUtils';
 import ReportParkingModal from './ReportParkingModal';
+import ReviewsModal from './ReviewsModal';
 
 /**
  * Modal Component showing detailed information about a parking spot
@@ -27,6 +28,7 @@ const ParkingDetailModal = ({
   hideSaveButton = false,
 }) => {
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showReviewsModal, setShowReviewsModal] = useState(false);
 
   if (!spot) return null;
 
@@ -101,6 +103,15 @@ const ParkingDetailModal = ({
                   <Text style={styles.reviewCountText}>
                     ({reviewCount} reviews)
                   </Text>
+                )}
+                {reviewCount > 0 && (
+                  <TouchableOpacity
+                    style={styles.viewReviewsButton}
+                    onPress={() => setShowReviewsModal(true)}>
+                    <Text style={styles.viewReviewsButtonText}>
+                      View Reviews
+                    </Text>
+                  </TouchableOpacity>
                 )}
               </View>
             )}
@@ -212,6 +223,14 @@ const ParkingDetailModal = ({
         spot={spot}
         onReportSuccess={handleReportSuccess}
       />
+
+      {/* Reviews Modal */}
+      <ReviewsModal
+        visible={showReviewsModal}
+        onClose={() => setShowReviewsModal(false)}
+        spotId={spot.id || spot.spot_id}
+        spotName={name}
+      />
     </Modal>
   );
 };
@@ -264,6 +283,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     gap: 8,
+    flexWrap: 'wrap',
   },
   ratingText: {
     fontSize: 20,
@@ -345,6 +365,18 @@ const styles = StyleSheet.create({
   reportButtonText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  viewReviewsButton: {
+    marginLeft: 'auto',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+  },
+  viewReviewsButtonText: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '600',
   },
 });

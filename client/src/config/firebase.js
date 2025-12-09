@@ -1758,6 +1758,430 @@ export const reportParkingSpot = async (spotId, reportData) => {
   }
 };
 
+// -------------------- Reviews Collection --------------------
+
+/**
+ * Submit a review for a parking spot
+ * @param {object} reviewData - Review data
+ * @param {string} reviewData.spot_id - Parking spot ID
+ * @param {number} reviewData.rating - Rating (1-5)
+ * @param {string} [reviewData.review_text] - Optional review text
+ * @param {string} [reviewData.booking_id] - Optional booking ID for verified reviews
+ * @returns {Promise<{success: boolean, reviewId?: string, error?: string}>}
+ */
+export const submitReview = async reviewData => {
+  try {
+    console.log('[submitReview] Starting review submission');
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      return {success: false, error: 'User must be logged in to submit a review'};
+    }
+
+    const {spot_id, rating, review_text, booking_id} = reviewData;
+
+    if (!spot_id) {
+      return {success: false, error: 'Spot ID is required'};
+    }
+
+    if (!rating || rating < 1 || rating > 5) {
+      return {success: false, error: 'Rating must be between 1 and 5'};
+    }
+
+    console.log('[submitReview] Current user:', currentUser.uid);
+    console.log('[submitReview] Checking if spot exists:', spot_id);
+
+    // Check if spot exists
+    let spotRef = doc(db, 'parking_spots', spot_id);
+    let spotSnap = await getDoc(spotRef);
+
+    // If direct lookup fails, try to find by original_data.id or id field
+    if (!spotSnap.exists() && spot_id && spot_id.includes('_')) {
+      console.log(
+        '[submitReview] Direct lookup failed, trying to find by original_data.id or id field:',
+        spot_id,
+      );
+      try {
+        const spotsRef = collection(db, 'parking_spots');
+        let q = query(spotsRef, where('original_data.id', '==', spot_id));
+        let querySnapshot = await getDocs(q);
+
+        if (querySnapshot.empty) {
+          q = query(spotsRef, where('id', '==', spot_id));
+          querySnapshot = await getDocs(q);
+        }
+
+        if (!querySnapshot.empty) {
+          const foundDoc = querySnapshot.docs[0];
+          console.log(
+            '[submitReview] Found spot by JSON ID, using Firestore document ID:',
+            foundDoc.id,
+          );
+          spotRef = doc(db, 'parking_spots', foundDoc.id);
+          spotSnap = await getDoc(spotRef);
+        }
+      } catch (queryError) {
+        console.error('[submitReview] Error querying for spot:', queryError);
+      }
+    }
+
+    if (!spotSnap.exists()) {
+      console.error('[submitReview] Parking spot not found:', spot_id);
+      return {success: false, error: 'Parking spot not found'};
+    }
+
+    const actualSpotId = spotSnap.id;
+    console.log('[submitReview] Spot found successfully');
+
+    // Get user profile for user name
+    let userName = 'Anonymous';
+    try {
+      const userProfile = await getUserProfile(currentUser.uid);
+      console.log('userProfile', userProfile);
+      
+      if (userProfile.success && userProfile.profile) {
+        userName =
+          userProfile.profile.display_name ||
+          userProfile.profile.username ||
+          userProfile.profile.email ||
+          'Anonymous';
+      }
+    } catch (profileError) {
+      console.warn('[submitReview] Could not fetch user profile:', profileError);
+    }
+
+    // Create review document
+    const reviewDoc = {
+      spot_id: actualSpotId,
+      user_id: currentUser.uid,
+      user_name: userName,
+      rating: rating,
+      review_text: review_text || '',
+      booking_id: booking_id || null,
+      is_verified: !!booking_id, // Verified if linked to a booking
+      created_at: serverTimestamp(),
+    };
+
+    const reviewsRef = collection(db, 'reviews');
+    const reviewDocRef = await addDoc(reviewsRef, reviewDoc);
+    console.log('[submitReview] ✅ Review created with ID:', reviewDocRef.id);
+
+    // Update parking spot rating and review count
+    try {
+      const spotData = spotSnap.data();
+      const currentRating = spotData.rating || 0;
+      const currentReviewCount = spotData.review_count || 0;
+
+      // Calculate new average rating
+      const newReviewCount = currentReviewCount + 1;
+      const newRating =
+        (currentRating * currentReviewCount + rating) / newReviewCount;
+
+      await updateDoc(spotRef, {
+        rating: Math.round(newRating * 10) / 10, // Round to 1 decimal place
+        review_count: newReviewCount,
+        updated_at: serverTimestamp(),
+      });
+
+      console.log(
+        '[submitReview] ✅ Updated spot rating:',
+        Math.round(newRating * 10) / 10,
+        'review_count:',
+        newReviewCount,
+      );
+    } catch (updateError) {
+      console.error(
+        '[submitReview] Error updating spot rating:',
+        updateError,
+      );
+      // Don't fail the review submission if rating update fails
+    }
+
+    return {success: true, reviewId: reviewDocRef.id};
+  } catch (error) {
+    console.error('[submitReview] Error submitting review:', error);
+    return {success: false, error: error.message || 'Failed to submit review'};
+  }
+};
+
+/**
+ * Get all reviews for a parking spot
+ * @param {string} spotId - Parking spot ID
+ * @returns {Promise<{success: boolean, reviews?: Array, error?: string}>}
+ */
+export const getSpotReviews = async spotId => {
+  try {
+    if (!spotId) {
+      return {success: false, error: 'Spot ID is required'};
+    }
+
+    console.log('[getSpotReviews] Starting review fetch for spotId:', spotId);
+
+    // Try direct lookup first
+    let spotRef = doc(db, 'parking_spots', spotId);
+    let spotSnap = await getDoc(spotRef);
+    let actualSpotId = spotId;
+
+    // If direct lookup fails, try to find by original_data.id or id field
+    if (!spotSnap.exists() && spotId && spotId.includes('_')) {
+      console.log('[getSpotReviews] Direct lookup failed, trying to find by original_data.id or id field');
+      try {
+        const spotsRef = collection(db, 'parking_spots');
+        let q = query(spotsRef, where('original_data.id', '==', spotId));
+        let querySnapshot = await getDocs(q);
+
+        if (querySnapshot.empty) {
+          q = query(spotsRef, where('id', '==', spotId));
+          querySnapshot = await getDocs(q);
+        }
+
+        if (!querySnapshot.empty) {
+          const foundDoc = querySnapshot.docs[0];
+          spotRef = doc(db, 'parking_spots', foundDoc.id);
+          spotSnap = await getDoc(spotRef);
+          actualSpotId = foundDoc.id; // Use actual Firestore document ID
+          console.log('[getSpotReviews] Found spot by query, using Firestore ID:', actualSpotId);
+        } else {
+          console.warn('[getSpotReviews] Spot not found, but will still try to query reviews with original spotId');
+        }
+      } catch (queryError) {
+        console.error('[getSpotReviews] Error querying for spot:', queryError);
+        // Continue anyway - reviews might still exist with the original spotId
+      }
+    } else if (spotSnap.exists()) {
+      actualSpotId = spotSnap.id;
+      console.log('[getSpotReviews] Spot found directly with ID:', actualSpotId);
+    }
+
+    // Also try querying with the original spotId in case reviews were saved with it
+    const spotIdsToTry = [actualSpotId];
+    if (actualSpotId !== spotId) {
+      spotIdsToTry.push(spotId);
+    }
+
+    // Query reviews for this spot - try both spot IDs
+    const reviewsRef = collection(db, 'reviews');
+    let allReviews = [];
+
+    for (const currentSpotId of spotIdsToTry) {
+      try {
+        let snapshot;
+        try {
+          // Try with orderBy first (requires composite index)
+          const q = query(
+            reviewsRef,
+            where('spot_id', '==', currentSpotId),
+            orderBy('created_at', 'desc'),
+          );
+          snapshot = await getDocs(q);
+        } catch (orderByError) {
+          // If orderBy fails (index not created), try without orderBy
+          console.warn(
+            '[getSpotReviews] orderBy failed for spotId',
+            currentSpotId,
+            ', trying without orderBy:',
+            orderByError.message,
+          );
+          const q = query(reviewsRef, where('spot_id', '==', currentSpotId));
+          snapshot = await getDocs(q);
+        }
+
+        const reviews = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            spot_id: data.spot_id,
+            user_id: data.user_id,
+            user_name: data.user_name || 'Anonymous',
+            rating: data.rating,
+            review_text: data.review_text || '',
+            booking_id: data.booking_id || null,
+            is_verified: data.is_verified || false,
+            created_at: data.created_at?.toDate?.() || data.created_at,
+          };
+        });
+
+        allReviews = allReviews.concat(reviews);
+        console.log('[getSpotReviews] Found', reviews.length, 'reviews for spotId:', currentSpotId);
+      } catch (queryError) {
+        console.warn('[getSpotReviews] Query failed for spotId', currentSpotId, ':', queryError.message);
+        // Continue to next spotId
+      }
+    }
+
+    // Remove duplicates (in case same review was found with both IDs)
+    const uniqueReviews = allReviews.filter(
+      (review, index, self) => index === self.findIndex(r => r.id === review.id),
+    );
+
+    // Sort by created_at descending
+    if (uniqueReviews.length > 0) {
+      uniqueReviews.sort((a, b) => {
+        const aTime = a.created_at?.getTime?.() || 0;
+        const bTime = b.created_at?.getTime?.() || 0;
+        return bTime - aTime; // Descending order (newest first)
+      });
+    }
+
+    console.log('[getSpotReviews] Returning', uniqueReviews.length, 'unique reviews');
+    return {success: true, reviews: uniqueReviews};
+  } catch (error) {
+    console.error('[getSpotReviews] Error getting reviews:', error);
+    return {success: false, error: error.message || 'Failed to get reviews'};
+  }
+};
+
+/**
+ * Check if a user has already reviewed a parking spot
+ * @param {string} spotId - Parking spot ID
+ * @param {string} userId - User ID
+ * @returns {Promise<{success: boolean, hasReviewed?: boolean, error?: string}>}
+ */
+export const checkUserHasReviewed = async (spotId, userId) => {
+  try {
+    if (!spotId || !userId) {
+      return {success: false, error: 'Spot ID and User ID are required'};
+    }
+
+    // Try direct lookup first
+    let spotRef = doc(db, 'parking_spots', spotId);
+    let spotSnap = await getDoc(spotRef);
+
+    // If direct lookup fails, try to find by original_data.id or id field
+    if (!spotSnap.exists() && spotId && spotId.includes('_')) {
+      try {
+        const spotsRef = collection(db, 'parking_spots');
+        let q = query(spotsRef, where('original_data.id', '==', spotId));
+        let querySnapshot = await getDocs(q);
+
+        if (querySnapshot.empty) {
+          q = query(spotsRef, where('id', '==', spotId));
+          querySnapshot = await getDocs(q);
+        }
+
+        if (!querySnapshot.empty) {
+          const foundDoc = querySnapshot.docs[0];
+          spotRef = doc(db, 'parking_spots', foundDoc.id);
+          spotSnap = await getDoc(spotRef);
+          spotId = foundDoc.id; // Use actual Firestore document ID
+        }
+      } catch (queryError) {
+        console.error('[checkUserHasReviewed] Error querying for spot:', queryError);
+      }
+    }
+
+    // Query reviews for this spot by this user
+    const reviewsRef = collection(db, 'reviews');
+    const q = query(
+      reviewsRef,
+      where('spot_id', '==', spotId),
+      where('user_id', '==', userId),
+      limit(1),
+    );
+
+    const snapshot = await getDocs(q);
+    return {success: true, hasReviewed: !snapshot.empty};
+  } catch (error) {
+    console.error('[checkUserHasReviewed] Error checking review:', error);
+    return {success: false, error: error.message || 'Failed to check review'};
+  }
+};
+
+/**
+ * Helper function to add a test review (for testing purposes only)
+ * @param {string} spotId - Parking spot ID (can be JSON-style like "khi_145" or Firestore document ID)
+ * @param {object} [options] - Optional review data
+ * @returns {Promise<{success: boolean, reviewId?: string, error?: string}>}
+ */
+export const addTestReviewForSpot = async (
+  spotId = 'khi_145',
+  options = {},
+) => {
+  try {
+    console.log('[addTestReviewForSpot] Adding test review for spot:', spotId);
+
+    // Find the actual Firestore document ID
+    let actualSpotId = spotId;
+    const spotsRef = collection(db, 'parking_spots');
+    let q = query(spotsRef, where('spot_id', '==', spotId));
+    let querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      // Try original_data.id
+      q = query(spotsRef, where('original_data.id', '==', spotId));
+      querySnapshot = await getDocs(q);
+    }
+
+    if (!querySnapshot.empty) {
+      actualSpotId = querySnapshot.docs[0].id;
+      console.log('[addTestReviewForSpot] Found spot, using Firestore ID:', actualSpotId);
+    } else {
+      // Try direct lookup
+      const spotRef = doc(db, 'parking_spots', spotId);
+      const spotSnap = await getDoc(spotRef);
+      if (spotSnap.exists()) {
+        actualSpotId = spotSnap.id;
+        console.log('[addTestReviewForSpot] Found spot directly');
+      } else {
+        console.warn('[addTestReviewForSpot] Spot not found, will use provided spotId');
+      }
+    }
+
+    // Create test review
+    const reviewData = {
+      spot_id: actualSpotId,
+      user_id: options.user_id || 'test_user_' + Date.now(),
+      user_name: options.user_name || 'Test Reviewer',
+      rating: options.rating || 4,
+      review_text:
+        options.review_text ||
+        'Great parking spot! Very convenient location. The parking area is well-maintained and secure. Would definitely use again.',
+      booking_id: options.booking_id || null,
+      is_verified: !!options.booking_id,
+      created_at: serverTimestamp(),
+    };
+
+    const reviewsRef = collection(db, 'reviews');
+    const reviewDocRef = await addDoc(reviewsRef, reviewData);
+    console.log('[addTestReviewForSpot] ✅ Review created:', reviewDocRef.id);
+
+    // Update spot rating and review count
+    try {
+      const spotRef = doc(db, 'parking_spots', actualSpotId);
+      const spotSnap = await getDoc(spotRef);
+      if (spotSnap.exists()) {
+        const spotData = spotSnap.data();
+        const currentRating = spotData.rating || 0;
+        const currentReviewCount = spotData.review_count || 0;
+        const newReviewCount = currentReviewCount + 1;
+        const newRating =
+          (currentRating * currentReviewCount + reviewData.rating) /
+          newReviewCount;
+
+        await updateDoc(spotRef, {
+          rating: Math.round(newRating * 10) / 10,
+          review_count: newReviewCount,
+          updated_at: serverTimestamp(),
+        });
+
+        console.log(
+          '[addTestReviewForSpot] ✅ Updated spot rating:',
+          Math.round(newRating * 10) / 10,
+        );
+      }
+    } catch (updateError) {
+      console.warn(
+        '[addTestReviewForSpot] ⚠️ Could not update spot rating:',
+        updateError,
+      );
+    }
+
+    return {success: true, reviewId: reviewDocRef.id};
+  } catch (error) {
+    console.error('[addTestReviewForSpot] ❌ Error:', error);
+    return {success: false, error: error.message};
+  }
+};
+
 export default {
   auth,
   db,
@@ -1788,6 +2212,12 @@ export default {
   getUserPayments,
   // Reporting
   reportParkingSpot,
+  // Reviews
+  submitReview,
+  getSpotReviews,
+  checkUserHasReviewed,
+  // Test helper (remove in production)
+  addTestReviewForSpot,
   // extras
   isUsernameAvailable,
   reserveUsername,

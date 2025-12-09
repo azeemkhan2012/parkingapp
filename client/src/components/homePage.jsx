@@ -35,6 +35,7 @@ import {useStripe} from '@stripe/stripe-react-native';
 import SavedParkingSpots from './SavedParkingSpots';
 import NotificationInbox from './NotificationInbox';
 import {getNotifications, getUnreadCount} from '../config/firebase';
+import ReviewFormModal from './ReviewFormModal';
 
 Logger.setLogCallback(log => {
   const {message} = log;
@@ -120,6 +121,8 @@ const HomePage = ({navigation}) => {
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isBookingLoading, setIsBookingLoading] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [currentBookingForReview, setCurrentBookingForReview] = useState(null);
 
   async function getPermissionLocation() {
     try {
@@ -257,8 +260,15 @@ const HomePage = ({navigation}) => {
 
     // Handle navigation from bookings to map location
     if (params?.bookingLocation) {
-      const {latitude, longitude, spotName, spotAddress, startNavigation} =
-        params.bookingLocation;
+      const {
+        latitude,
+        longitude,
+        spotName,
+        spotAddress,
+        startNavigation,
+        spotId,
+        bookingId,
+      } = params.bookingLocation;
 
       if (latitude && longitude) {
         // Update destination coordinates
@@ -295,11 +305,14 @@ const HomePage = ({navigation}) => {
           console.log('[homePage] Destination:', {latitude, longitude});
           console.log('[homePage] Route profile:', selectedRouteProfile);
 
-          // Store navigation request
+          // Store navigation request with booking info for review
           pendingNavigationRef.current = {
             destination: {latitude, longitude},
             routeProfile: selectedRouteProfile,
             timestamp: Date.now(),
+            spotId: spotId,
+            bookingId: bookingId,
+            spotName: spotName,
           };
 
           // If location is already available, start navigation after a short delay
@@ -1076,7 +1089,23 @@ const HomePage = ({navigation}) => {
       currentStep.shift();
 
       if (currentStep.length === 0) {
-        Alert.alert('Arrived!', 'You reached your destination.');
+        Alert.alert('Arrived!', 'You reached your destination.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Check if we have booking info for review
+              const pending = pendingNavigationRef.current;
+              if (pending && (pending.spotId || pending.bookingId)) {
+                setCurrentBookingForReview({
+                  spotId: pending.spotId,
+                  bookingId: pending.bookingId,
+                  spotName: pending.spotName,
+                });
+                setShowReviewForm(true);
+              }
+            },
+          },
+        ]);
         setIsNavigating(false);
       } else {
         setCurrentStep([...currentStep]);
@@ -1487,6 +1516,27 @@ const HomePage = ({navigation}) => {
             <Text style={styles.loaderSubtext}>Please wait</Text>
           </View>
         </View>
+      )}
+
+      {/* Review Form Modal - shown after navigation completion */}
+      {currentBookingForReview && (
+        <ReviewFormModal
+          visible={showReviewForm}
+          onClose={() => {
+            setShowReviewForm(false);
+            setCurrentBookingForReview(null);
+            // Clear pending navigation ref
+            pendingNavigationRef.current = null;
+          }}
+          spotId={currentBookingForReview.spotId}
+          spotName={currentBookingForReview.spotName}
+          bookingId={currentBookingForReview.bookingId}
+          onReviewSubmitted={() => {
+            setShowReviewForm(false);
+            setCurrentBookingForReview(null);
+            pendingNavigationRef.current = null;
+          }}
+        />
       )}
     </View>
   );

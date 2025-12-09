@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState} from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   getSpotRating,
   getReviewCount,
 } from '../utils/parkingUtils';
+import ReportParkingModal from './ReportParkingModal';
 
 /**
  * Modal Component showing detailed information about a parking spot
@@ -25,6 +26,8 @@ const ParkingDetailModal = ({
   onSaveForLater,
   hideSaveButton = false,
 }) => {
+  const [showReportModal, setShowReportModal] = useState(false);
+
   if (!spot) return null;
 
   const capacity = getSpotCapacity(spot);
@@ -63,6 +66,14 @@ const ParkingDetailModal = ({
     if (onSaveForLater) {
       onSaveForLater(spot);
     }
+  };
+
+  const handleReportSuccess = () => {
+    // Refresh spot data or notify parent component
+    // The Cloud Function will automatically send notifications
+    setShowReportModal(false);
+    // Optionally close the detail modal too
+    // onClose();
   };
 
   return (
@@ -183,9 +194,24 @@ const ParkingDetailModal = ({
                 </TouchableOpacity>
               )}
             </View>
+
+            {/* Report Button */}
+            <TouchableOpacity
+              style={styles.reportButton}
+              onPress={() => setShowReportModal(true)}>
+              <Text style={styles.reportButtonText}>📝 Report Changes</Text>
+            </TouchableOpacity>
           </ScrollView>
         </View>
       </View>
+
+      {/* Report Modal */}
+      <ReportParkingModal
+        visible={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        spot={spot}
+        onReportSuccess={handleReportSuccess}
+      />
     </Modal>
   );
 };
@@ -308,6 +334,18 @@ const styles = StyleSheet.create({
   },
   fullWidthButton: {
     flex: 1,
+  },
+  reportButton: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#FFA500',
+    alignItems: 'center',
+  },
+  reportButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

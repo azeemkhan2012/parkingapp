@@ -209,7 +209,14 @@ export const getParkingSpots = async () => {
       where('is_available', '==', true),
     );
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({id: d.id, ...d.data()}));
+    return snapshot.docs.map(d => {
+      const data = d.data();
+      // Ensure the document ID is always used, even if data contains an id field
+      return {
+        ...data,
+        id: d.id, // Always use the Firestore document ID
+      };
+    });
   } catch (error) {
     console.error('Error getting parking spots:', error);
     return [];
@@ -735,7 +742,14 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
       spotData.longitude ||
       spotData.original_data?.location?.longitude ||
       spotData.location?.longitude;
+    // Always try to get spot_id - it's critical for notifications
+    // The spot_id should be the Firestore document ID
     const spotId = spotData.id || spotData.spot_id || '';
+
+    console.log('[saveParkingSpotForLater] Spot ID:', spotId, 'from spotData:', {
+      id: spotData.id,
+      spot_id: spotData.spot_id,
+    });
 
     // Check if already saved - wrapped in try-catch to avoid permission errors
     const savedSpotsRef = collection(db, 'saved_spots');
@@ -1555,6 +1569,195 @@ export const getUserPayments = async (userId, status = null) => {
   }
 };
 
+// -------------------- Report Parking Spot --------------------
+/**
+ * Report parking spot changes (availability, pricing, space)
+ * Updates the parking spot in Firestore and triggers notifications
+ * @param {string} spotId - Parking spot ID
+ * @param {object} reportData - Report data containing changes
+ * @param {number} [reportData.availability_available] - New available spots count
+ * @param {number} [reportData.availability_total] - New total spots count
+ * @param {number} [reportData.pricing_hourly] - New hourly price
+ * @param {number} [reportData.pricing_daily] - New daily price
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export const reportParkingSpot = async (spotId, reportData) => {
+  try {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      return {success: false, error: 'User must be logged in to report'};
+    }
+
+    if (!spotId) {
+      console.error('[reportParkingSpot] No spot ID provided');
+      return {success: false, error: 'Spot ID is required'};
+    }
+
+    console.log('[reportParkingSpot] Attempting to report spot with ID:', spotId);
+    let spotRef = doc(db, 'parking_spots', spotId);
+    let spotSnap = await getDoc(spotRef);
+
+    // If direct lookup fails and the ID looks like a JSON ID (e.g., khi_144),
+    // try to find the document by querying for original_data.id or id field
+    if (!spotSnap.exists() && spotId && spotId.includes('_')) {
+      console.log('[reportParkingSpot] Direct lookup failed, trying to find by original_data.id or id field:', spotId);
+      try {
+        const spotsRef = collection(db, 'parking_spots');
+        // Try to find by original_data.id first
+        let q = query(spotsRef, where('original_data.id', '==', spotId));
+        let querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+          // Try to find by id field
+          q = query(spotsRef, where('id', '==', spotId));
+          querySnapshot = await getDocs(q);
+        }
+        
+        if (!querySnapshot.empty) {
+          // Found it! Use the actual Firestore document ID
+          const foundDoc = querySnapshot.docs[0];
+          console.log('[reportParkingSpot] Found spot by JSON ID, using Firestore document ID:', foundDoc.id);
+          spotRef = doc(db, 'parking_spots', foundDoc.id);
+          spotSnap = await getDoc(spotRef);
+        }
+      } catch (queryError) {
+        console.error('[reportParkingSpot] Error querying for spot:', queryError);
+      }
+    }
+
+    if (!spotSnap.exists()) {
+      console.error('[reportParkingSpot] Parking spot not found in Firestore:', spotId);
+      console.error('[reportParkingSpot] This might indicate the spot ID is incorrect or the spot was deleted');
+      return {success: false, error: 'Parking spot not found'};
+    }
+    
+    // Update spotId to the actual Firestore document ID if we found it via query
+    const actualSpotId = spotSnap.id;
+    if (actualSpotId !== spotId) {
+      console.log('[reportParkingSpot] Using actual Firestore document ID:', actualSpotId, 'instead of:', spotId);
+    }
+
+    const spotData = spotSnap.data();
+    const updateData = {
+      updated_at: serverTimestamp(),
+    };
+
+    // Update availability if provided
+    if (reportData.availability_available !== undefined) {
+      const newAvailable = parseInt(reportData.availability_available);
+      if (isNaN(newAvailable) || newAvailable < 0) {
+        return {success: false, error: 'Invalid availability count'};
+      }
+      updateData.availability_available = newAvailable;
+      
+      // Update is_available flag based on availability
+      updateData.is_available = newAvailable > 0;
+    }
+
+    // Update total spots if provided
+    if (reportData.availability_total !== undefined) {
+      const newTotal = parseInt(reportData.availability_total);
+      if (isNaN(newTotal) || newTotal < 1) {
+        return {success: false, error: 'Invalid total spots count'};
+      }
+      updateData.availability_total = newTotal;
+      
+      // Ensure available doesn't exceed total
+      const currentAvailable = updateData.availability_available !== undefined
+        ? updateData.availability_available
+        : (spotData.availability_available || 0);
+      if (currentAvailable > newTotal) {
+        updateData.availability_available = newTotal;
+      }
+    }
+
+    // Track if we need to update nested pricing
+    let needsNestedPricingUpdate = false;
+    let nestedPricing = null;
+
+    // Update hourly pricing if provided
+    if (reportData.pricing_hourly !== undefined) {
+      const newHourlyPrice = parseFloat(reportData.pricing_hourly);
+      if (isNaN(newHourlyPrice) || newHourlyPrice < 0) {
+        return {success: false, error: 'Invalid hourly price'};
+      }
+      updateData.pricing_hourly = newHourlyPrice;
+      
+      // Prepare nested pricing update
+      if (spotData.original_data?.pricing) {
+        needsNestedPricingUpdate = true;
+        const originalPricing = spotData.original_data.pricing;
+        nestedPricing = {
+          ...originalPricing,
+          hourly: newHourlyPrice,
+        };
+      }
+    }
+
+    // Update daily pricing if provided
+    if (reportData.pricing_daily !== undefined) {
+      const newDailyPrice = parseFloat(reportData.pricing_daily);
+      if (isNaN(newDailyPrice) || newDailyPrice < 0) {
+        return {success: false, error: 'Invalid daily price'};
+      }
+      updateData.pricing_daily = newDailyPrice;
+      
+      // Update nested pricing (merge with existing if already set)
+      if (spotData.original_data?.pricing) {
+        needsNestedPricingUpdate = true;
+        const originalPricing = spotData.original_data.pricing;
+        nestedPricing = nestedPricing || {...originalPricing};
+        nestedPricing.daily = newDailyPrice;
+      }
+    }
+
+    // Apply nested pricing update if needed
+    if (needsNestedPricingUpdate && nestedPricing) {
+      const originalData = spotData.original_data || {};
+      updateData.original_data = {
+        ...originalData,
+        pricing: nestedPricing,
+      };
+    }
+
+    // Log what will be updated for debugging
+    console.log('[reportParkingSpot] Updating parking spot:', {
+      spotId: actualSpotId,
+      updateData,
+      reportData,
+    });
+
+    // Create report record for tracking
+    const reportRecord = {
+      spot_id: actualSpotId,
+      user_id: currentUser.uid,
+      report_type: 'user_report',
+      report_data: reportData,
+      created_at: serverTimestamp(),
+    };
+
+    // Update the parking spot - this will trigger the Cloud Function
+    await updateDoc(spotRef, updateData);
+
+    console.log('[reportParkingSpot] ✅ Parking spot updated in Firestore:', actualSpotId);
+    console.log('[reportParkingSpot] Cloud Function should automatically detect changes and send notifications');
+
+    // Store the report in reports collection for audit trail
+    try {
+      await addDoc(collection(db, 'parking_reports'), reportRecord);
+      console.log('[reportParkingSpot] Report record stored for audit trail');
+    } catch (reportError) {
+      // Log but don't fail if report storage fails
+      console.warn('[reportParkingSpot] Failed to store report record:', reportError);
+    }
+
+    return {success: true};
+  } catch (error) {
+    console.error('Error reporting parking spot:', error);
+    return {success: false, error: error.message};
+  }
+};
+
 export default {
   auth,
   db,
@@ -1583,6 +1786,8 @@ export default {
   updatePaymentStatus,
   getPaymentBySessionId,
   getUserPayments,
+  // Reporting
+  reportParkingSpot,
   // extras
   isUsernameAvailable,
   reserveUsername,

@@ -388,10 +388,14 @@ const HomePage = ({navigation}) => {
     try {
       // Fetch all parking spots from Firestore
       const snapshot = await getDocs(collection(db, 'parking_spots'));
-      const allSpots = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const allSpots = snapshot.docs.map(doc => {
+        const data = doc.data();
+        // Ensure the document ID is always used, even if data contains an id field
+        return {
+          ...data,
+          id: doc.id, // Always use the Firestore document ID
+        };
+      });
 
       // Filter spots that have valid coordinates
       const validSpots = allSpots.filter(spot => {
@@ -640,8 +644,8 @@ const HomePage = ({navigation}) => {
   }
 
   const handleBookNow = spot => {
-    startCheckout(spot);
     setShowNearbyModal(false);
+    startCheckout(spot);
   };
 
   const handleSaveForLater = async spot => {

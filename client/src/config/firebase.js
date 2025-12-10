@@ -225,17 +225,20 @@ export const getParkingSpots = async () => {
 
 export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
   // Define refs outside try block so they're available in catch/retry
-    const spotRef = doc(db, 'parking_spots', spotId);
-    const bookingsRef = collection(db, 'bookings');
-    let bookingId = null;
-  
+  const spotRef = doc(db, 'parking_spots', spotId);
+  const bookingsRef = collection(db, 'bookings');
+  let bookingId = null;
+
   try {
     console.log('[bookParkingSpot] Starting booking creation...');
     console.log('[bookParkingSpot] Spot ID:', spotId);
     console.log('[bookParkingSpot] User ID:', userId);
-    
+
     // Don't stringify bookingData - it might contain Date objects or other non-serializable data
-    console.log('[bookParkingSpot] Booking data keys:', Object.keys(bookingData));
+    console.log(
+      '[bookParkingSpot] Booking data keys:',
+      Object.keys(bookingData),
+    );
     console.log('[bookParkingSpot] Booking status:', bookingData.status);
     console.log('[bookParkingSpot] Payment ID:', bookingData.payment_id);
     await runTransaction(db, async tx => {
@@ -337,7 +340,7 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
 
       console.log('[bookParkingSpot] Creating booking document:', bookingId);
       // Don't stringify bookingDataToStore - it contains serverTimestamp() which can't be serialized
-      console.log('[bookParkingSpot] Booking data keys:', Object.keys(bookingDataToStore));
+      console.log(        '[bookParkingSpot] Booking data keys:',         Object.keys(bookingDataToStore)      );
 
       tx.set(bookingDocRef, bookingDataToStore);
     });
@@ -352,20 +355,24 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
     const errorCode = error?.code || '';
     const errorCause = error?.cause?.message || error?.cause || '';
     const errorStack = error?.stack || '';
-    
+
     // Check for URL.host error in multiple ways - check all possible locations
     const allErrorText = `${errorMessage} ${errorString} ${errorCode} ${errorCause} ${errorStack}`;
-    const isUrlHostError = allErrorText.includes('URL.host') || 
-                          allErrorText.includes('URL.host is not implemented') ||
-                          errorMessage.includes('URL.host') || 
-                          errorMessage.includes('URL.host is not implemented') ||
-                          errorString.includes('URL.host') || 
-                          errorString.includes('URL.host is not implemented') ||
-                          errorStack.includes('URL.host');
-    
+    const isUrlHostError =
+      allErrorText.includes('URL.host') ||
+      allErrorText.includes('URL.host is not implemented') ||
+      errorMessage.includes('URL.host') ||
+      errorMessage.includes('URL.host is not implemented') ||
+      errorString.includes('URL.host') ||
+      errorString.includes('URL.host is not implemented') ||
+      errorStack.includes('URL.host');
+
     // Try retry for URL.host errors OR any FirebaseError with unknown code (common for serialization issues)
-    const shouldRetry = isUrlHostError || (error?.name === 'FirebaseError' && (errorCode === 'unknown' || !errorCode));
-    
+    const shouldRetry =
+      isUrlHostError ||
+      (error?.name === 'FirebaseError' &&
+        (errorCode === 'unknown' || !errorCode));
+
     // Only log full error details if we're not going to retry (to reduce noise)
     if (!shouldRetry) {
       console.error('[bookParkingSpot] ❌ Error creating booking:', error);
@@ -373,9 +380,12 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
       console.error('[bookParkingSpot] Error stack:', error?.stack);
     } else {
       // For retry-able errors, just log a brief message
-      console.warn('[bookParkingSpot] ⚠️ Initial booking attempt failed (will retry):', errorMessage.substring(0, 100));
+      console.warn(
+        '[bookParkingSpot] ⚠️ Initial booking attempt failed (will retry):',
+        errorMessage.substring(0, 100),
+      );
     }
-    
+
     console.log('[bookParkingSpot] 🔍 Checking for URL.host error...', {
       isUrlHostError,
       errorMessage: errorMessage.substring(0, 100),
@@ -386,36 +396,67 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
       hasUrlHostInStack: errorStack.includes('URL.host'),
       shouldRetry,
     });
-    
+
     if (shouldRetry) {
-      console.warn('[bookParkingSpot] 🔄 Error detected that may benefit from retry:', {
-        isUrlHostError,
-        isFirebaseError: error?.name === 'FirebaseError',
-        errorCode,
-        willRetry: true,
-      });
-      console.warn('[bookParkingSpot] 🔄 URL.host error detected, retrying with writeBatch (no serverTimestamp)...');
+      console.warn(
+        '[bookParkingSpot] 🔄 Error detected that may benefit from retry:',
+        {
+          isUrlHostError,
+          isFirebaseError: error?.name === 'FirebaseError',
+          errorCode,
+          willRetry: true,
+        },
+      );
+      console.warn(
+        '[bookParkingSpot] 🔄 URL.host error detected, retrying with writeBatch (no serverTimestamp)...',
+      );
       console.warn('[bookParkingSpot] 🔄 Starting retry attempt...');
-      
+
       try {
         // Retry using writeBatch and avoid serverTimestamp() which might cause URL.host error
         const retrySpotRef = doc(db, 'parking_spots', spotId);
         const retryBookingsRef = collection(db, 'bookings');
-        
+
         // Extract booking data first (may contain location data from original spot)
-        const paymentId = (bookingData.payment_id && typeof bookingData.payment_id === 'string') ? bookingData.payment_id : null;
-        const sessionId = (bookingData.session_id && typeof bookingData.session_id === 'string') ? bookingData.session_id : null;
-        const status = (bookingData.status && typeof bookingData.status === 'string') ? bookingData.status : 'confirmed';
-        const amount = (typeof bookingData.amount === 'number') ? bookingData.amount : 0;
-        const currency = (bookingData.currency && typeof bookingData.currency === 'string') ? bookingData.currency : 'USD';
-        
+        const paymentId =
+          bookingData.payment_id && typeof bookingData.payment_id === 'string'
+            ? bookingData.payment_id
+            : null;
+        const sessionId =
+          bookingData.session_id && typeof bookingData.session_id === 'string'
+            ? bookingData.session_id
+            : null;
+        const status =
+          bookingData.status && typeof bookingData.status === 'string'
+            ? bookingData.status
+            : 'confirmed';
+        const amount =
+          typeof bookingData.amount === 'number' ? bookingData.amount : 0;
+        const currency =
+          bookingData.currency && typeof bookingData.currency === 'string'
+            ? bookingData.currency
+            : 'USD';
+
         // Try to get location data from bookingData first (passed from App.tsx)
-        let spotName = (bookingData.spot_name && typeof bookingData.spot_name === 'string') ? bookingData.spot_name : 'Parking Spot';
-        let spotAddress = (bookingData.spot_address && typeof bookingData.spot_address === 'string') ? bookingData.spot_address : null;
-        let spotLatitude = (typeof bookingData.spot_latitude === 'number') ? bookingData.spot_latitude : null;
-        let spotLongitude = (typeof bookingData.spot_longitude === 'number') ? bookingData.spot_longitude : null;
+        let spotName =
+          bookingData.spot_name && typeof bookingData.spot_name === 'string'
+            ? bookingData.spot_name
+            : 'Parking Spot';
+        let spotAddress =
+          bookingData.spot_address &&
+          typeof bookingData.spot_address === 'string'
+            ? bookingData.spot_address
+            : null;
+        let spotLatitude =
+          typeof bookingData.spot_latitude === 'number'
+            ? bookingData.spot_latitude
+            : null;
+        let spotLongitude =
+          typeof bookingData.spot_longitude === 'number'
+            ? bookingData.spot_longitude
+            : null;
         let availableSpots = 0;
-        
+
         // Try to fetch spot data to get location and update availability
         console.log('[bookParkingSpot] 🔄 Fetching spot data for retry...');
         try {
@@ -423,55 +464,84 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
           if (spotSnap.exists()) {
             const spot = spotSnap.data();
             console.log('[bookParkingSpot] 🔄 Spot data fetched successfully');
-            
+
             availableSpots = spot.availability_available || 0;
             if (availableSpots <= 0 && spot.is_available === false) {
-              console.warn('[bookParkingSpot] ⚠️ Spot not available, but continuing with booking creation');
+              console.warn(
+                '[bookParkingSpot] ⚠️ Spot not available, but continuing with booking creation',
+              );
             }
-            
+
             // Use spot data if not already in bookingData
             if (!spotName || spotName === 'Parking Spot') {
-              spotName = (spot.name && typeof spot.name === 'string') ? spot.name : spotName;
+              spotName =
+                spot.name && typeof spot.name === 'string'
+                  ? spot.name
+                  : spotName;
             }
             if (!spotAddress) {
-              spotAddress = (spot.address && typeof spot.address === 'string') ? spot.address :
-                           (spot.location?.address && typeof spot.location.address === 'string') ? spot.location.address :
-                           (spot.original_data?.location?.address && typeof spot.original_data.location.address === 'string') ? spot.original_data.location.address :
-                           null;
+              spotAddress =
+                spot.address && typeof spot.address === 'string'
+                  ? spot.address
+                  : spot.location?.address &&
+                    typeof spot.location.address === 'string'
+                  ? spot.location.address
+                  : spot.original_data?.location?.address &&
+                    typeof spot.original_data.location.address === 'string'
+                  ? spot.original_data.location.address
+                  : null;
             }
             if (spotLatitude === null) {
-              spotLatitude = (typeof spot.latitude === 'number') ? spot.latitude :
-                            (typeof spot.location?.latitude === 'number') ? spot.location.latitude :
-                            (typeof spot.original_data?.location?.latitude === 'number') ? spot.original_data.location.latitude :
-                            null;
+              spotLatitude =
+                typeof spot.latitude === 'number'
+                  ? spot.latitude
+                  : typeof spot.location?.latitude === 'number'
+                  ? spot.location.latitude
+                  : typeof spot.original_data?.location?.latitude === 'number'
+                  ? spot.original_data.location.latitude
+                  : null;
             }
             if (spotLongitude === null) {
-              spotLongitude = (typeof spot.longitude === 'number') ? spot.longitude :
-                             (typeof spot.location?.longitude === 'number') ? spot.location.longitude :
-                             (typeof spot.original_data?.location?.longitude === 'number') ? spot.original_data.location.longitude :
-                             null;
+              spotLongitude =
+                typeof spot.longitude === 'number'
+                  ? spot.longitude
+                  : typeof spot.location?.longitude === 'number'
+                  ? spot.location.longitude
+                  : typeof spot.original_data?.location?.longitude === 'number'
+                  ? spot.original_data.location.longitude
+                  : null;
             }
           } else {
-            console.warn('[bookParkingSpot] ⚠️ Spot does not exist, but continuing with booking creation using bookingData');
+            console.warn(
+              '[bookParkingSpot] ⚠️ Spot does not exist, but continuing with booking creation using bookingData',
+            );
           }
         } catch (spotFetchError) {
-          console.warn('[bookParkingSpot] ⚠️ Error fetching spot data:', spotFetchError?.message);
-          console.warn('[bookParkingSpot] ⚠️ Continuing with booking creation using bookingData');
+          console.warn(
+            '[bookParkingSpot] ⚠️ Error fetching spot data:',
+            spotFetchError?.message,
+          );
+          console.warn(
+            '[bookParkingSpot] ⚠️ Continuing with booking creation using bookingData',
+          );
         }
-        
+
         // Use current timestamp as number instead of serverTimestamp()
         const now = Date.now();
-        
-        console.log('[bookParkingSpot] 🔄 Creating writeBatch with location data:', {
-          spotName,
-          hasAddress: !!spotAddress,
-          hasLatitude: spotLatitude !== null,
-          hasLongitude: spotLongitude !== null,
-        });
-        
+
+        console.log(
+          '[bookParkingSpot] 🔄 Creating writeBatch with location data:',
+          {
+            spotName,
+            hasAddress: !!spotAddress,
+            hasLatitude: spotLatitude !== null,
+            hasLongitude: spotLongitude !== null,
+          },
+        );
+
         // Use writeBatch instead of transaction
         const batch = writeBatch(db);
-        
+
         // Try to update spot availability only if spot exists
         try {
           const spotSnap = await getDoc(retrySpotRef);
@@ -480,19 +550,26 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
               availability_available: Math.max(0, availableSpots - 1),
               updated_at: now,
             });
-            console.log('[bookParkingSpot] 🔄 Spot availability will be updated');
+            console.log(
+              '[bookParkingSpot] 🔄 Spot availability will be updated',
+            );
           } else {
-            console.log('[bookParkingSpot] 🔄 Skipping spot availability update (spot not found or unavailable)');
+            console.log(
+              '[bookParkingSpot] 🔄 Skipping spot availability update (spot not found or unavailable)',
+            );
           }
         } catch (updateError) {
-          console.warn('[bookParkingSpot] ⚠️ Could not update spot availability:', updateError?.message);
+          console.warn(
+            '[bookParkingSpot] ⚠️ Could not update spot availability:',
+            updateError?.message,
+          );
         }
-        
+
         // Create booking document
         const bookingDocRef = doc(retryBookingsRef);
         bookingId = bookingDocRef.id;
         console.log('[bookParkingSpot] 🔄 Booking ID generated:', bookingId);
-        
+
         // Complete booking data - use timestamp numbers instead of serverTimestamp()
         const bookingDataToStore = {
           user_id: userId,
@@ -509,55 +586,82 @@ export const bookParkingSpot = async (spotId, userId, bookingData = {}) => {
           booking_start: now,
           confirmed_at: now,
         };
-        
+
         // Add location fields - CRITICAL for navigation
         if (spotAddress) bookingDataToStore.spot_address = spotAddress;
-        if (spotLatitude !== null) bookingDataToStore.spot_latitude = spotLatitude;
-        if (spotLongitude !== null) bookingDataToStore.spot_longitude = spotLongitude;
-        
+        if (spotLatitude !== null)
+          bookingDataToStore.spot_latitude = spotLatitude;
+        if (spotLongitude !== null)
+          bookingDataToStore.spot_longitude = spotLongitude;
+
         console.log('[bookParkingSpot] 🔄 Booking data to store:', {
           ...bookingDataToStore,
           spot_address: spotAddress || 'N/A',
           spot_latitude: spotLatitude !== null ? spotLatitude : 'N/A',
           spot_longitude: spotLongitude !== null ? spotLongitude : 'N/A',
         });
-        
+
         batch.set(bookingDocRef, bookingDataToStore);
-        
+
         console.log('[bookParkingSpot] 🔄 Committing batch...');
         // Commit the batch
         await batch.commit();
         console.log('[bookParkingSpot] 🔄 Batch committed successfully!');
-        
-        console.log('[bookParkingSpot] ✅ Booking created successfully (retry with writeBatch)!');
+
+        console.log(
+          '[bookParkingSpot] ✅ Booking created successfully (retry with writeBatch)!',
+        );
         console.log('[bookParkingSpot] Booking ID:', bookingId);
         return {success: true, bookingId};
       } catch (retryError) {
         console.error('[bookParkingSpot] ❌ Retry also failed:', retryError);
-        console.error('[bookParkingSpot] Retry error message:', retryError?.message);
-        console.error('[bookParkingSpot] Retry error stack:', retryError?.stack);
+        console.error(
+          '[bookParkingSpot] Retry error message:',
+          retryError?.message,
+        );
+        console.error(
+          '[bookParkingSpot] Retry error stack:',
+          retryError?.stack,
+        );
         console.error('[bookParkingSpot] Retry error type:', typeof retryError);
-        console.error('[bookParkingSpot] Retry error string:', String(retryError));
-        
+        console.error(
+          '[bookParkingSpot] Retry error string:',
+          String(retryError),
+        );
+
         // Return the actual error message if it's not URL.host related
         const retryErrorMessage = retryError?.message || String(retryError);
         if (retryErrorMessage.includes('URL.host')) {
-          return {success: false, error: 'Booking creation failed due to serialization error. Please try again.'};
+          return {
+            success: false,
+            error:
+              'Booking creation failed due to serialization error. Please try again.',
+          };
         }
-        return {success: false, error: retryErrorMessage || 'Booking creation failed. Please try again.'};
+        return {
+          success: false,
+          error:
+            retryErrorMessage || 'Booking creation failed. Please try again.',
+        };
       }
     }
-    
+
     return {success: false, error: errorMessage};
   }
 };
 
 // -------------------- Username mapping (for username login) --------------------
 export const isUsernameAvailable = async username => {
-  const uname = normUsername(username);
-  if (!uname) return false;
-  const snap = await getDoc(doc(db, 'usernames', uname));
-  return !snap.exists();
+  try {
+    const uname = normUsername(username);
+    if (!uname) return false;
+    const snap = await getDoc(doc(db, 'usernames', uname));
+    return !snap.exists();
+  } catch (error) {
+    console.error('Error checking username availability:', error);
+    // Re-throw the error so the caller can handle it appropriately
+    throw error;
+  }
 };
 
 export const reserveUsername = async (uid, username, email) => {
@@ -746,10 +850,15 @@ export const saveParkingSpotForLater = async (userId, spotData) => {
     // The spot_id should be the Firestore document ID
     const spotId = spotData.id || spotData.spot_id || '';
 
-    console.log('[saveParkingSpotForLater] Spot ID:', spotId, 'from spotData:', {
-      id: spotData.id,
-      spot_id: spotData.spot_id,
-    });
+    console.log(
+      '[saveParkingSpotForLater] Spot ID:',
+      spotId,
+      'from spotData:',
+      {
+        id: spotData.id,
+        spot_id: spotData.spot_id,
+      },
+    );
 
     // Check if already saved - wrapped in try-catch to avoid permission errors
     const savedSpotsRef = collection(db, 'saved_spots');
@@ -1082,14 +1191,14 @@ export const getUserBookings = async (userId, status = null) => {
     // Try with orderBy first (requires index)
     try {
       let q;
-    if (status) {
-      q = query(
-        bookingsRef,
-        where('user_id', '==', userId),
-        where('status', '==', status),
+      if (status) {
+        q = query(
+          bookingsRef,
+          where('user_id', '==', userId),
+          where('status', '==', status),
           orderBy('booked_at', 'desc'),
-      );
-    } else {
+        );
+      } else {
         q = query(
           bookingsRef,
           where('user_id', '==', userId),
@@ -1131,11 +1240,11 @@ export const getUserBookings = async (userId, status = null) => {
 
     // Sort by most recent first (if orderBy wasn't used)
     if (bookings.length > 0) {
-    bookings.sort((a, b) => {
-      const aTime = a.booked_at?.getTime?.() || 0;
-      const bTime = b.booked_at?.getTime?.() || 0;
-      return bTime - aTime;
-    });
+      bookings.sort((a, b) => {
+        const aTime = a.booked_at?.getTime?.() || 0;
+        const bTime = b.booked_at?.getTime?.() || 0;
+        return bTime - aTime;
+      });
     }
 
     return {success: true, bookings};
@@ -1175,7 +1284,7 @@ export const getBillingHistory = async userId => {
 
     // Get all payments
     const payments = paymentsSnapshot.docs.map(d => ({
-        id: d.id,
+      id: d.id,
       ...d.data(),
       created_at: d.data().created_at?.toDate?.() || d.data().created_at,
       paid_at: d.data().paid_at?.toDate?.() || d.data().paid_at,
@@ -1218,8 +1327,10 @@ export const getBillingHistory = async userId => {
                 status: booking.status || 'unknown',
                 spot_name: booking.spot_name || 'Parking Spot',
                 spot_address: booking.spot_address || 'Address not available',
-                booking_start: booking.booking_start?.toDate?.() || booking.booking_start,
-                booking_end: booking.booking_end?.toDate?.() || booking.booking_end,
+                booking_start:
+                  booking.booking_start?.toDate?.() || booking.booking_start,
+                booking_end:
+                  booking.booking_end?.toDate?.() || booking.booking_end,
                 booked_at: booking.booked_at?.toDate?.() || booking.booked_at,
               };
             }
@@ -1271,7 +1382,9 @@ export const getBillingHistory = async userId => {
           currency: payment.currency?.toUpperCase() || 'USD',
           payment_status: payment.status || 'unknown',
           payment_method: payment.payment_method || 'stripe',
-          status: bookingData?.status || (payment.status === 'succeeded' ? 'confirmed' : 'pending'),
+          status:
+            bookingData?.status ||
+            (payment.status === 'succeeded' ? 'confirmed' : 'pending'),
           booked_at: bookingData?.booked_at || payment.created_at,
           booking_start: bookingData?.booking_start || null,
           booking_end: bookingData?.booking_end || null,
@@ -1445,20 +1558,20 @@ export const getPaymentBySessionId = async (sessionId, userId = null) => {
   // userId is optional - if provided, query will be more secure and efficient
   try {
     const paymentsRef = collection(db, 'payments');
-    
+
     // If userId is provided, filter by both session_id and user_id for better security rule compliance
     // Otherwise, just filter by session_id (less secure but works if userId not available)
     let q;
     if (userId) {
       q = query(
-        paymentsRef, 
+        paymentsRef,
         where('session_id', '==', sessionId),
-        where('user_id', '==', userId)
+        where('user_id', '==', userId),
       );
     } else {
       q = query(paymentsRef, where('session_id', '==', sessionId));
     }
-    
+
     const snapshot = await getDocs(q);
 
     if (snapshot.empty) {
@@ -1472,7 +1585,8 @@ export const getPaymentBySessionId = async (sessionId, userId = null) => {
       payment: {
         id: paymentDoc.id,
         ...paymentData,
-        created_at: paymentData.created_at?.toDate?.() || paymentData.created_at,
+        created_at:
+          paymentData.created_at?.toDate?.() || paymentData.created_at,
         paid_at: paymentData.paid_at?.toDate?.() || paymentData.paid_at,
         refunded_at:
           paymentData.refunded_at?.toDate?.() || paymentData.refunded_at,
@@ -1593,48 +1707,70 @@ export const reportParkingSpot = async (spotId, reportData) => {
       return {success: false, error: 'Spot ID is required'};
     }
 
-    console.log('[reportParkingSpot] Attempting to report spot with ID:', spotId);
+    console.log(
+      '[reportParkingSpot] Attempting to report spot with ID:',
+      spotId,
+    );
     let spotRef = doc(db, 'parking_spots', spotId);
     let spotSnap = await getDoc(spotRef);
 
     // If direct lookup fails and the ID looks like a JSON ID (e.g., khi_144),
     // try to find the document by querying for original_data.id or id field
     if (!spotSnap.exists() && spotId && spotId.includes('_')) {
-      console.log('[reportParkingSpot] Direct lookup failed, trying to find by original_data.id or id field:', spotId);
+      console.log(
+        '[reportParkingSpot] Direct lookup failed, trying to find by original_data.id or id field:',
+        spotId,
+      );
       try {
         const spotsRef = collection(db, 'parking_spots');
         // Try to find by original_data.id first
         let q = query(spotsRef, where('original_data.id', '==', spotId));
         let querySnapshot = await getDocs(q);
-        
+
         if (querySnapshot.empty) {
           // Try to find by id field
           q = query(spotsRef, where('id', '==', spotId));
           querySnapshot = await getDocs(q);
         }
-        
+
         if (!querySnapshot.empty) {
           // Found it! Use the actual Firestore document ID
           const foundDoc = querySnapshot.docs[0];
-          console.log('[reportParkingSpot] Found spot by JSON ID, using Firestore document ID:', foundDoc.id);
+          console.log(
+            '[reportParkingSpot] Found spot by JSON ID, using Firestore document ID:',
+            foundDoc.id,
+          );
           spotRef = doc(db, 'parking_spots', foundDoc.id);
           spotSnap = await getDoc(spotRef);
         }
       } catch (queryError) {
-        console.error('[reportParkingSpot] Error querying for spot:', queryError);
+        console.error(
+          '[reportParkingSpot] Error querying for spot:',
+          queryError,
+        );
       }
     }
 
     if (!spotSnap.exists()) {
-      console.error('[reportParkingSpot] Parking spot not found in Firestore:', spotId);
-      console.error('[reportParkingSpot] This might indicate the spot ID is incorrect or the spot was deleted');
+      console.error(
+        '[reportParkingSpot] Parking spot not found in Firestore:',
+        spotId,
+      );
+      console.error(
+        '[reportParkingSpot] This might indicate the spot ID is incorrect or the spot was deleted',
+      );
       return {success: false, error: 'Parking spot not found'};
     }
-    
+
     // Update spotId to the actual Firestore document ID if we found it via query
     const actualSpotId = spotSnap.id;
     if (actualSpotId !== spotId) {
-      console.log('[reportParkingSpot] Using actual Firestore document ID:', actualSpotId, 'instead of:', spotId);
+      console.log(
+        '[reportParkingSpot] Using actual Firestore document ID:',
+        actualSpotId,
+        'instead of:',
+        spotId,
+      );
     }
 
     const spotData = spotSnap.data();
@@ -1649,7 +1785,7 @@ export const reportParkingSpot = async (spotId, reportData) => {
         return {success: false, error: 'Invalid availability count'};
       }
       updateData.availability_available = newAvailable;
-      
+
       // Update is_available flag based on availability
       updateData.is_available = newAvailable > 0;
     }
@@ -1661,11 +1797,12 @@ export const reportParkingSpot = async (spotId, reportData) => {
         return {success: false, error: 'Invalid total spots count'};
       }
       updateData.availability_total = newTotal;
-      
+
       // Ensure available doesn't exceed total
-      const currentAvailable = updateData.availability_available !== undefined
-        ? updateData.availability_available
-        : (spotData.availability_available || 0);
+      const currentAvailable =
+        updateData.availability_available !== undefined
+          ? updateData.availability_available
+          : spotData.availability_available || 0;
       if (currentAvailable > newTotal) {
         updateData.availability_available = newTotal;
       }
@@ -1682,7 +1819,7 @@ export const reportParkingSpot = async (spotId, reportData) => {
         return {success: false, error: 'Invalid hourly price'};
       }
       updateData.pricing_hourly = newHourlyPrice;
-      
+
       // Prepare nested pricing update
       if (spotData.original_data?.pricing) {
         needsNestedPricingUpdate = true;
@@ -1701,7 +1838,7 @@ export const reportParkingSpot = async (spotId, reportData) => {
         return {success: false, error: 'Invalid daily price'};
       }
       updateData.pricing_daily = newDailyPrice;
-      
+
       // Update nested pricing (merge with existing if already set)
       if (spotData.original_data?.pricing) {
         needsNestedPricingUpdate = true;
@@ -1739,8 +1876,13 @@ export const reportParkingSpot = async (spotId, reportData) => {
     // Update the parking spot - this will trigger the Cloud Function
     await updateDoc(spotRef, updateData);
 
-    console.log('[reportParkingSpot] ✅ Parking spot updated in Firestore:', actualSpotId);
-    console.log('[reportParkingSpot] Cloud Function should automatically detect changes and send notifications');
+    console.log(
+      '[reportParkingSpot] ✅ Parking spot updated in Firestore:',
+      actualSpotId,
+    );
+    console.log(
+      '[reportParkingSpot] Cloud Function should automatically detect changes and send notifications',
+    );
 
     // Store the report in reports collection for audit trail
     try {
@@ -1748,7 +1890,10 @@ export const reportParkingSpot = async (spotId, reportData) => {
       console.log('[reportParkingSpot] Report record stored for audit trail');
     } catch (reportError) {
       // Log but don't fail if report storage fails
-      console.warn('[reportParkingSpot] Failed to store report record:', reportError);
+      console.warn(
+        '[reportParkingSpot] Failed to store report record:',
+        reportError,
+      );
     }
 
     return {success: true};
@@ -1774,7 +1919,10 @@ export const submitReview = async reviewData => {
     console.log('[submitReview] Starting review submission');
     const currentUser = getCurrentUser();
     if (!currentUser) {
-      return {success: false, error: 'User must be logged in to submit a review'};
+      return {
+        success: false,
+        error: 'User must be logged in to submit a review',
+      };
     }
 
     const {spot_id, rating, review_text, booking_id} = reviewData;
@@ -1836,17 +1984,20 @@ export const submitReview = async reviewData => {
     let userName = 'Anonymous';
     try {
       const userProfile = await getUserProfile(currentUser.uid);
-      console.log('userProfile', userProfile);
-      
-      if (userProfile.success && userProfile.profile) {
+      console.log('userProfile', userProfile?.userData?.username);
+
+      if (userProfile?.success && userProfile?.userData) {
         userName =
-          userProfile.profile.display_name ||
-          userProfile.profile.username ||
-          userProfile.profile.email ||
+          userProfile?.userData?.username ||
+          userProfile?.userData?.firstName ||
+          userProfile?.userData?.email ||
           'Anonymous';
       }
     } catch (profileError) {
-      console.warn('[submitReview] Could not fetch user profile:', profileError);
+      console.warn(
+        '[submitReview] Could not fetch user profile:',
+        profileError,
+      );
     }
 
     // Create review document
@@ -1889,10 +2040,7 @@ export const submitReview = async reviewData => {
         newReviewCount,
       );
     } catch (updateError) {
-      console.error(
-        '[submitReview] Error updating spot rating:',
-        updateError,
-      );
+      console.error('[submitReview] Error updating spot rating:', updateError);
       // Don't fail the review submission if rating update fails
     }
 
@@ -1923,7 +2071,9 @@ export const getSpotReviews = async spotId => {
 
     // If direct lookup fails, try to find by original_data.id or id field
     if (!spotSnap.exists() && spotId && spotId.includes('_')) {
-      console.log('[getSpotReviews] Direct lookup failed, trying to find by original_data.id or id field');
+      console.log(
+        '[getSpotReviews] Direct lookup failed, trying to find by original_data.id or id field',
+      );
       try {
         const spotsRef = collection(db, 'parking_spots');
         let q = query(spotsRef, where('original_data.id', '==', spotId));
@@ -1939,9 +2089,14 @@ export const getSpotReviews = async spotId => {
           spotRef = doc(db, 'parking_spots', foundDoc.id);
           spotSnap = await getDoc(spotRef);
           actualSpotId = foundDoc.id; // Use actual Firestore document ID
-          console.log('[getSpotReviews] Found spot by query, using Firestore ID:', actualSpotId);
+          console.log(
+            '[getSpotReviews] Found spot by query, using Firestore ID:',
+            actualSpotId,
+          );
         } else {
-          console.warn('[getSpotReviews] Spot not found, but will still try to query reviews with original spotId');
+          console.warn(
+            '[getSpotReviews] Spot not found, but will still try to query reviews with original spotId',
+          );
         }
       } catch (queryError) {
         console.error('[getSpotReviews] Error querying for spot:', queryError);
@@ -1949,7 +2104,10 @@ export const getSpotReviews = async spotId => {
       }
     } else if (spotSnap.exists()) {
       actualSpotId = spotSnap.id;
-      console.log('[getSpotReviews] Spot found directly with ID:', actualSpotId);
+      console.log(
+        '[getSpotReviews] Spot found directly with ID:',
+        actualSpotId,
+      );
     }
 
     // Also try querying with the original spotId in case reviews were saved with it
@@ -2001,16 +2159,27 @@ export const getSpotReviews = async spotId => {
         });
 
         allReviews = allReviews.concat(reviews);
-        console.log('[getSpotReviews] Found', reviews.length, 'reviews for spotId:', currentSpotId);
+        console.log(
+          '[getSpotReviews] Found',
+          reviews.length,
+          'reviews for spotId:',
+          currentSpotId,
+        );
       } catch (queryError) {
-        console.warn('[getSpotReviews] Query failed for spotId', currentSpotId, ':', queryError.message);
+        console.warn(
+          '[getSpotReviews] Query failed for spotId',
+          currentSpotId,
+          ':',
+          queryError.message,
+        );
         // Continue to next spotId
       }
     }
 
     // Remove duplicates (in case same review was found with both IDs)
     const uniqueReviews = allReviews.filter(
-      (review, index, self) => index === self.findIndex(r => r.id === review.id),
+      (review, index, self) =>
+        index === self.findIndex(r => r.id === review.id),
     );
 
     // Sort by created_at descending
@@ -2022,7 +2191,11 @@ export const getSpotReviews = async spotId => {
       });
     }
 
-    console.log('[getSpotReviews] Returning', uniqueReviews.length, 'unique reviews');
+    console.log(
+      '[getSpotReviews] Returning',
+      uniqueReviews.length,
+      'unique reviews',
+    );
     return {success: true, reviews: uniqueReviews};
   } catch (error) {
     console.error('[getSpotReviews] Error getting reviews:', error);
@@ -2065,7 +2238,10 @@ export const checkUserHasReviewed = async (spotId, userId) => {
           spotId = foundDoc.id; // Use actual Firestore document ID
         }
       } catch (queryError) {
-        console.error('[checkUserHasReviewed] Error querying for spot:', queryError);
+        console.error(
+          '[checkUserHasReviewed] Error querying for spot:',
+          queryError,
+        );
       }
     }
 
@@ -2113,7 +2289,10 @@ export const addTestReviewForSpot = async (
 
     if (!querySnapshot.empty) {
       actualSpotId = querySnapshot.docs[0].id;
-      console.log('[addTestReviewForSpot] Found spot, using Firestore ID:', actualSpotId);
+      console.log(
+        '[addTestReviewForSpot] Found spot, using Firestore ID:',
+        actualSpotId,
+      );
     } else {
       // Try direct lookup
       const spotRef = doc(db, 'parking_spots', spotId);
@@ -2122,7 +2301,9 @@ export const addTestReviewForSpot = async (
         actualSpotId = spotSnap.id;
         console.log('[addTestReviewForSpot] Found spot directly');
       } else {
-        console.warn('[addTestReviewForSpot] Spot not found, will use provided spotId');
+        console.warn(
+          '[addTestReviewForSpot] Spot not found, will use provided spotId',
+        );
       }
     }
 

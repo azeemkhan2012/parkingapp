@@ -38,30 +38,6 @@ const ReviewFormModal = ({
     }
   }, [visible, spotId]);
 
-  const checkExistingReview = async () => {
-    if (!spotId) return;
-
-    setCheckingExisting(true);
-    try {
-      const {getCurrentUser} = require('../config/firebase');
-      const currentUser = getCurrentUser();
-      if (currentUser) {
-        const result = await checkUserHasReviewed(spotId, currentUser.uid);
-        if (result.success && result.hasReviewed) {
-          Alert.alert(
-            'Already Reviewed',
-            'You have already reviewed this parking spot. You can update your review if needed.',
-            [{text: 'OK'}],
-          );
-        }
-      }
-    } catch (error) {
-      console.error('Error checking existing review:', error);
-    } finally {
-      setCheckingExisting(false);
-    }
-  };
-
   const handleStarPress = starValue => {
     setRating(starValue);
   };
@@ -78,7 +54,7 @@ const ReviewFormModal = ({
           <Text style={[styles.star, i <= rating && styles.starFilled]}>
             {i <= rating ? '⭐' : '☆'}
           </Text>
-        </TouchableOpacity>
+        </TouchableOpacity>,
       );
     }
     return stars;
@@ -86,7 +62,10 @@ const ReviewFormModal = ({
 
   const handleSubmit = async () => {
     if (rating === 0) {
-      Alert.alert('Rating Required', 'Please select a rating before submitting.');
+      Alert.alert(
+        'Rating Required',
+        'Please select a rating before submitting.',
+      );
       return;
     }
 
@@ -122,7 +101,10 @@ const ReviewFormModal = ({
           ],
         );
       } else {
-        Alert.alert('Error', result.error || 'Failed to submit review. Please try again.');
+        Alert.alert(
+          'Error',
+          result.error || 'Failed to submit review. Please try again.',
+        );
       }
     } catch (error) {
       console.error('Error submitting review:', error);
@@ -170,9 +152,7 @@ const ReviewFormModal = ({
             {/* Rating Section */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Rating *</Text>
-              <View style={styles.starsContainer}>
-                {renderStars()}
-              </View>
+              <View style={styles.starsContainer}>{renderStars()}</View>
               {rating > 0 && (
                 <Text style={styles.ratingText}>
                   {rating === 1

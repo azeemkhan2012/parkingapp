@@ -52,6 +52,7 @@ const DirectionsView = ({route, navigation}) => {
   const [selectedRouteProfile, setSelectedRouteProfile] = useState('driving');
   const [zoom, setZoom] = useState(12);
   const [showReviewForm, setShowReviewForm] = useState(false);
+  const [goBackToHome, setGoBackToHome] = useState(false);
 
   const cameraRef = useRef(null);
   const simIntervalRef = useRef(null); // interval ref for simulation
@@ -70,6 +71,12 @@ const DirectionsView = ({route, navigation}) => {
       mapboxProfile: 'driving',
     },
   ];
+
+  useEffect(() => {
+    if (goBackToHome) {
+      navigation.navigate('home');
+    }
+  }, [goBackToHome]);
 
   // Get initial location
   useEffect(() => {
@@ -324,7 +331,7 @@ const DirectionsView = ({route, navigation}) => {
       cameraRef.current.setCamera({
         centerCoordinate: [userLng, userLat],
         zoomLevel: 16,
-        pitch: 70,
+        pitch: 80,
         animationMode: 'flyTo',
         animationDuration: 1000,
       });
@@ -587,12 +594,14 @@ const DirectionsView = ({route, navigation}) => {
           visible={showReviewForm}
           onClose={() => {
             setShowReviewForm(false);
+            setGoBackToHome(true);
           }}
           spotId={spotId}
           spotName={spotName}
           bookingId={bookingId}
           onReviewSubmitted={() => {
             setShowReviewForm(false);
+            setGoBackToHome(true);
           }}
         />
       )}

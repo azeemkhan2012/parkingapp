@@ -99,10 +99,7 @@ const BillingHistoryScreen = ({navigation}) => {
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             style={styles.backButton}>
-            <Image
-              source={require('../assets/arrow.png')}
-              style={styles.backIcon}
-            />
+            <Text style={styles.backButtonText}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Billing History</Text>
           <View style={styles.placeholder} />
@@ -123,10 +120,7 @@ const BillingHistoryScreen = ({navigation}) => {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backButton}>
-          <Image
-            source={require('../assets/arrow.png')}
-            style={styles.backIcon}
-          />
+          <Text style={styles.backButtonText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Billing History</Text>
         <TouchableOpacity
@@ -135,18 +129,6 @@ const BillingHistoryScreen = ({navigation}) => {
           <Text style={styles.refreshText}>Refresh</Text>
         </TouchableOpacity>
       </View>
-
-      {bills.length > 0 && (
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Total Spent</Text>
-          <Text style={styles.summaryAmount}>PKR {totalSpent.toFixed(2)}</Text>
-          <Text style={styles.summarySubtext}>
-            {bills.filter(b => b.payment_status === 'paid').length} successful
-            payments
-          </Text>
-        </View>
-      )}
-
       <ScrollView
         style={styles.content}
         contentContainerStyle={styles.contentContainer}>
@@ -280,10 +262,11 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e0e0e0',
   },
   backButton: {
-    width: 40,
-    height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  backButtonText: {
+    color: '#007AFF',
   },
   backIcon: {
     width: 24,

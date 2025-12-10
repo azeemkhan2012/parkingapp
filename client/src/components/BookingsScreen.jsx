@@ -10,7 +10,11 @@ import {
   Image,
 } from 'react-native';
 import {useFocusEffect} from '@react-navigation/native';
-import {getUserBookings, cancelBooking, getCurrentUser} from '../config/firebase';
+import {
+  getUserBookings,
+  cancelBooking,
+  getCurrentUser,
+} from '../config/firebase';
 
 const BookingsScreen = ({navigation}) => {
   const [bookings, setBookings] = useState([]);
@@ -38,13 +42,19 @@ const BookingsScreen = ({navigation}) => {
         return;
       }
 
-      console.log('[BookingsScreen] Loading bookings for user:', currentUser.uid);
+      console.log(
+        '[BookingsScreen] Loading bookings for user:',
+        currentUser.uid,
+      );
       const result = await getUserBookings(currentUser.uid);
       console.log('[BookingsScreen] Bookings result:', result);
-      
+
       if (result.success) {
-        console.log('[BookingsScreen] Found bookings:', result.bookings?.length || 0);
-        
+        console.log(
+          '[BookingsScreen] Found bookings:',
+          result.bookings?.length || 0,
+        );
+
         // Log booking data for debugging
         if (result.bookings && result.bookings.length > 0) {
           result.bookings.forEach((booking, index) => {
@@ -61,14 +71,19 @@ const BookingsScreen = ({navigation}) => {
             });
           });
         }
-        
+
         setBookings(result.bookings || []);
-        
+
         if (result.bookings && result.bookings.length === 0) {
-          console.log('[BookingsScreen] No bookings found. Checking Firestore directly...');
+          console.log(
+            '[BookingsScreen] No bookings found. Checking Firestore directly...',
+          );
         }
       } else {
-        console.error('[BookingsScreen] Failed to load bookings:', result.error);
+        console.error(
+          '[BookingsScreen] Failed to load bookings:',
+          result.error,
+        );
         Alert.alert('Error', result.error || 'Failed to load bookings');
       }
     } catch (error) {
@@ -98,7 +113,10 @@ const BookingsScreen = ({navigation}) => {
                 Alert.alert('Success', 'Booking cancelled successfully');
                 loadBookings(); // Reload bookings
               } else {
-                Alert.alert('Error', result.error || 'Failed to cancel booking');
+                Alert.alert(
+                  'Error',
+                  result.error || 'Failed to cancel booking',
+                );
               }
             } catch (error) {
               Alert.alert('Error', 'Failed to cancel booking');
@@ -114,7 +132,7 @@ const BookingsScreen = ({navigation}) => {
   const formatDate = date => {
     if (!date) return 'N/A';
     if (typeof date === 'string') return date;
-    
+
     // Handle numeric timestamps (milliseconds since epoch)
     if (typeof date === 'number') {
       return new Date(date).toLocaleDateString('en-US', {
@@ -125,10 +143,10 @@ const BookingsScreen = ({navigation}) => {
         minute: '2-digit',
       });
     }
-    
+
     // Handle Firestore Timestamp objects
     if (date.toDate) date = date.toDate();
-    
+
     // Handle Date objects
     if (date instanceof Date) {
       return date.toLocaleDateString('en-US', {
@@ -139,7 +157,7 @@ const BookingsScreen = ({navigation}) => {
         minute: '2-digit',
       });
     }
-    
+
     return 'N/A';
   };
 
@@ -163,10 +181,7 @@ const BookingsScreen = ({navigation}) => {
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             style={styles.backButton}>
-            <Image
-              source={require('../assets/arrow.png')}
-              style={styles.backIcon}
-            />
+            <Text style={styles.backIcon}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>My Bookings</Text>
           <View style={styles.placeholder} />
@@ -185,10 +200,7 @@ const BookingsScreen = ({navigation}) => {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backButton}>
-          <Image
-            source={require('../assets/arrow.png')}
-            style={styles.backIcon}
-          />
+          <Text style={styles.backIcon}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Bookings</Text>
         <TouchableOpacity onPress={loadBookings} style={styles.refreshButton}>
@@ -196,7 +208,9 @@ const BookingsScreen = ({navigation}) => {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentContainer}>
         {bookings.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No bookings found</Text>
@@ -275,7 +289,10 @@ const BookingsScreen = ({navigation}) => {
                   <TouchableOpacity
                     style={styles.navigateButton}
                     onPress={() => {
-                      console.log('[BookingsScreen] Get Direction pressed for booking:', booking.id);
+                      console.log(
+                        '[BookingsScreen] Get Direction pressed for booking:',
+                        booking.id,
+                      );
                       console.log('[BookingsScreen] Booking coordinates:', {
                         latitude: booking.spot_latitude,
                         longitude: booking.spot_longitude,
@@ -288,6 +305,8 @@ const BookingsScreen = ({navigation}) => {
                           spotName: booking.spot_name,
                           spotAddress: booking.spot_address,
                           startNavigation: true, // Flag to start navigation automatically
+                          spotId: booking.spot_id, // For review submission
+                          bookingId: booking.id, // For review submission
                         },
                       });
                     }}>
@@ -299,7 +318,9 @@ const BookingsScreen = ({navigation}) => {
                   </TouchableOpacity>
                 ) : (
                   <View style={styles.noLocationContainer}>
-                    <Text style={styles.noLocationText}>Location not available</Text>
+                    <Text style={styles.noLocationText}>
+                      Location not available
+                    </Text>
                   </View>
                 )}
 
@@ -308,14 +329,17 @@ const BookingsScreen = ({navigation}) => {
                   <TouchableOpacity
                     style={[
                       styles.cancelButton,
-                      cancellingId === booking.id && styles.cancelButtonDisabled,
+                      cancellingId === booking.id &&
+                        styles.cancelButtonDisabled,
                     ]}
                     onPress={() => handleCancelBooking(booking.id)}
                     disabled={cancellingId === booking.id}>
                     {cancellingId === booking.id ? (
                       <ActivityIndicator color="#fff" size="small" />
                     ) : (
-                      <Text style={styles.cancelButtonText}>Cancel Booking</Text>
+                      <Text style={styles.cancelButtonText}>
+                        Cancel Booking
+                      </Text>
                     )}
                   </TouchableOpacity>
                 )}
@@ -345,16 +369,12 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e0e0e0',
   },
   backButton: {
-    width: 40,
-    height: 40,
+    display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
   },
   backIcon: {
-    width: 24,
-    height: 24,
-    tintColor: '#333',
-    transform: [{rotate: '180deg'}],
+    color: '#007AFF',
   },
   headerTitle: {
     fontSize: 20,
@@ -542,5 +562,3 @@ const styles = StyleSheet.create({
 });
 
 export default BookingsScreen;
-
-

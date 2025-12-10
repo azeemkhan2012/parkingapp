@@ -1,4 +1,4 @@
-import React, {useEffect, useState, useRef} from 'react';
+import React, {useEffect, useState, useRef, useCallback} from 'react';
 import {useRoute} from '@react-navigation/native';
 import {
   View,
@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import MapboxGL, {Logger} from '@rnmapbox/maps';
 import Geolocation from '@react-native-community/geolocation';
-import Ionicons from 'react-native-vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getCurrentUser,
@@ -23,6 +22,7 @@ import {
   deleteFCMToken as deleteFCMTokenFromFirestore,
   saveFCMToken,
   createPaymentRecord,
+  getUnreadCount,
 } from '../config/firebase';
 import {
   deleteFCMToken as deleteLocalFCMToken,
@@ -31,14 +31,12 @@ import {
 import {collection, getDocs} from 'firebase/firestore';
 import {db} from '../config/firebase';
 import NearbyParkingModal from './NearbyParkingModal';
-import {useStripe} from '@stripe/stripe-react-native';
 import SavedParkingSpots from './SavedParkingSpots';
 import NotificationInbox from './NotificationInbox';
-import {getNotifications, getUnreadCount} from '../config/firebase';
+import ReviewFormModal from './ReviewFormModal';
 
 Logger.setLogCallback(log => {
   const {message} = log;
-
   if (
     message.match('Request failed due to a permanent error: Canceled') ||
     message.match('Request failed due to a permanent error: Socket Closed')
@@ -47,40 +45,16 @@ Logger.setLogCallback(log => {
   }
   return false;
 });
+
 MapboxGL.setAccessToken(
   'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg',
 );
-// MapboxGL.setConnected(true);
 MapboxGL.setTelemetryEnabled(false);
+
 Geolocation.setRNConfiguration({
   skipPermissionRequests: false,
   authorizationLevel: 'auto',
 });
-
-const routeProfiles = [
-  // {
-  //   id: 'walking',
-  //   label: 'Walking',
-  //   icon: require('../assets/walking.png'),
-  //   mapboxProfile: 'walking',
-  //   transportKey: 'walking',
-  // },
-  {
-    id: 'cycling',
-    label: 'Cycling',
-    icon: require('../assets/bike.png'),
-    mapboxProfile: 'cycling',
-    transportKey: 'bike',
-  },
-  {
-    id: 'driving',
-    label: 'Bus',
-    icon: require('../assets/car.png'),
-    isBus: true,
-    mapboxProfile: 'driving',
-    transportKey: 'car',
-  },
-];
 
 const INITIAL_COORDINATE = {
   latitude: 37.78825,
@@ -88,27 +62,39 @@ const INITIAL_COORDINATE = {
   zoomLevel: 14,
 };
 
-const APIKEY =
-  'pk.eyJ1IjoiaHV6YWlmYS1zYXR0YXIxIiwiYSI6ImNsbmQxMmZ6dTAwcHgyam1qeXU2bjcwOXQifQ.Pvx7OyCBvhwtBbHVVKOCEg';
+/* ---------------- Helper: Distance ---------------- */
+
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const toRad = deg => (deg * Math.PI) / 180;
+
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δφ = toRad(lat2 - lat1);
+  const Δλ = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // meters
+}
 
 const HomePage = ({navigation}) => {
   const route = useRoute();
+  const cameraRef = useRef(null);
+  const pendingNavigationRef = useRef(null);
+
   const [search, setSearch] = useState('');
-  const [destinationCoords, setDestinationCoords] = useState([24.8021, 67.03]);
   const [zoom, setZoom] = useState(INITIAL_COORDINATE.zoomLevel);
   const [userLocation, setUserLocation] = useState(null);
-  const pendingNavigationRef = React.useRef(null); // Track pending navigation request
-  const [selectedRouteProfile, setselectedRouteProfile] = useState('driving');
-  const [selectedTransportMode, setSelectedTransportMode] = useState('bike'); // 'car', 'bus', 'walking'
   const [routeDirections, setRouteDirections] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [distance, setDistance] = useState(null);
-  const [duration, setDuration] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
   const [currentStep, setCurrentStep] = useState(null);
-  const [routeSteps, setRouteSteps] = useState([]);
   const [showNearbyModal, setShowNearbyModal] = useState(false);
   const [nearbySpots, setNearbySpots] = useState([]);
   const [loadingNearby, setLoadingNearby] = useState(false);
@@ -120,6 +106,17 @@ const HomePage = ({navigation}) => {
   const [showSearchBar, setShowSearchBar] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isBookingLoading, setIsBookingLoading] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [currentBookingForReview, setCurrentBookingForReview] = useState(null);
+  const [searchedLocation, setSearchedLocation] = useState(null);
+
+  // If these exist in your full file, keep them; otherwise define:
+  const [destinationCoords, setDestinationCoords] = useState(null);
+  const [distance, setDistance] = useState(null);
+  const [duration, setDuration] = useState(null);
+  const [selectedRouteProfile] = useState('driving');
+
+  /* ---------------- Location Permission ---------------- */
 
   async function getPermissionLocation() {
     try {
@@ -133,14 +130,12 @@ const HomePage = ({navigation}) => {
           setLoading(false);
         },
         err => {
-          console.log('location error', err);
-          Alert.alert('Error', err.message || 'Could not get location');
+          Alert.alert('Error', err?.message || 'Could not get location');
           setLoading(false);
         },
         {enableHighAccuracy: true},
       );
-    } catch (error) {
-      console.error('Error getting location', error);
+    } catch {
       setLoading(false);
     }
   }
@@ -148,92 +143,78 @@ const HomePage = ({navigation}) => {
   const handleCurrentLocationPress = () => {
     getPermissionLocation();
     setSearch('');
-    // Clear destination coords to remove the parking icon when showing current location
-    setDestinationCoords(null);
-    // Clear route directions when switching to current location
     setRouteDirections(null);
     setDistance(null);
     setDuration(null);
+    setSearchedLocation(null);
   };
+
   useEffect(() => {
     getPermissionLocation();
-    if (selectedRouteProfile !== null) {
-      // createRouterLine(userLocation, selectedRouteProfile);
-    }
-  }, [selectedRouteProfile]);
+  }, []);
 
-  // Initialize FCM if user is already logged in (app restart scenario)
+  /* ---------------- FCM Init on App Start ---------------- */
+
   useEffect(() => {
     const initializeFCMIfLoggedIn = async () => {
       const currentUser = getCurrentUser();
-      if (currentUser) {
-        try {
-          const fcmToken = await initializeFCM();
-          if (fcmToken) {
-            await saveFCMToken(currentUser.uid, fcmToken);
-            console.log('FCM token initialized for logged-in user');
-          }
-        } catch (fcmError) {
-          console.error('Error initializing FCM on app start:', fcmError);
+      if (!currentUser) {
+        return;
+      }
+      try {
+        const fcmToken = await initializeFCM();
+        if (fcmToken) {
+          await saveFCMToken(currentUser.uid, fcmToken);
         }
+      } catch {
+        // Fail silently – push setup should not block app
       }
     };
 
     initializeFCMIfLoggedIn();
   }, []);
 
-  // Load unread notification count
+  /* ---------------- Unread Notification Count ---------------- */
+
   useEffect(() => {
     const loadUnreadCount = async () => {
       const currentUser = getCurrentUser();
-      if (currentUser) {
-        try {
-          const count = await getUnreadCount(currentUser.uid);
-          setUnreadCount(count);
-        } catch (error) {
-          console.error('Error loading unread count:', error);
-        }
+      if (!currentUser) return;
+
+      try {
+        const count = await getUnreadCount(currentUser.uid);
+        setUnreadCount(count);
+      } catch {
+        // If unread count fails, ignore; app still works
       }
     };
 
     loadUnreadCount();
-    // Refresh unread count every 30 seconds
     const interval = setInterval(loadUnreadCount, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Check for checkout completion when component mounts or becomes focused
+  /* ---------------- Checkout Status Loader ---------------- */
+
   useEffect(() => {
     const checkCheckoutStatus = async () => {
       try {
         const checkoutInProgress = await AsyncStorage.getItem(
           'checkout_in_progress',
         );
-        if (checkoutInProgress === 'true') {
-          // Checkout was in progress, but user might have returned
-          // Check if it was completed (flag would be cleared by App.tsx)
-          // If still set, keep loader visible
-          setIsBookingLoading(true);
-        } else {
-          setIsBookingLoading(false);
-        }
-      } catch (e) {
-        console.warn('Error checking checkout status:', e);
+        setIsBookingLoading(checkoutInProgress === 'true');
+      } catch {
         setIsBookingLoading(false);
       }
     };
 
     checkCheckoutStatus();
 
-    // Also check when screen is focused (user returns from Stripe)
-    const unsubscribe = navigation.addListener('focus', () => {
-      checkCheckoutStatus();
-    });
+    const unsubscribe = navigation.addListener('focus', checkCheckoutStatus);
 
-    // Poll periodically if loader is visible (in case user stays on home page)
     let intervalId = null;
     if (isBookingLoading) {
-      intervalId = setInterval(checkCheckoutStatus, 1000); // Check every second
+      intervalId = setInterval(checkCheckoutStatus, 1000);
     }
 
     return () => {
@@ -244,35 +225,39 @@ const HomePage = ({navigation}) => {
     };
   }, [navigation, isBookingLoading]);
 
-  // Handle navigation from notifications and bookings
+  /* ---------------- Navigation from Notifications / Bookings ---------------- */
+
   useEffect(() => {
     const params = route.params;
+
+    // Open saved spot directly
     if (params?.openSavedSpot && params?.savedSpotId) {
-      // Open saved spots modal and select the specific spot
       setShowSavedSpots(true);
       setSavedSpotToOpen(params.savedSpotId);
-      // Clear params to avoid reopening on subsequent navigations
       navigation.setParams({openSavedSpot: undefined, savedSpotId: undefined});
     }
 
-    // Handle navigation from bookings to map location
+    // Booking → Map location
     if (params?.bookingLocation) {
-      const {latitude, longitude, spotName, spotAddress, startNavigation} =
-        params.bookingLocation;
+      const {
+        latitude,
+        longitude,
+        spotName,
+        spotAddress,
+        startNavigation,
+        spotId,
+        bookingId,
+      } = params.bookingLocation;
 
       if (latitude && longitude) {
-        // Update destination coordinates
-        setDestinationCoords([longitude, latitude]);
         setZoom(15);
 
-        // Set search text to spot name or address
         if (spotName) {
           setSearch(spotName);
         } else if (spotAddress) {
           setSearch(spotAddress);
         }
 
-        // Move camera to booking location
         if (cameraRef.current) {
           try {
             cameraRef.current.setCamera({
@@ -281,99 +266,28 @@ const HomePage = ({navigation}) => {
               animationMode: 'flyTo',
               animationDuration: 1000,
             });
-          } catch (e) {
-            console.warn('Camera update error:', e);
+          } catch {
+            // Camera errors are non-critical
           }
         }
 
-        // If startNavigation flag is set, store navigation request and wait for user location
         if (startNavigation) {
-          console.log(
-            '[homePage] 🧭 Navigation requested to booking location...',
-          );
-          console.log('[homePage] User location available:', !!userLocation);
-          console.log('[homePage] Destination:', {latitude, longitude});
-          console.log('[homePage] Route profile:', selectedRouteProfile);
-
-          // Store navigation request
           pendingNavigationRef.current = {
             destination: {latitude, longitude},
             routeProfile: selectedRouteProfile,
             timestamp: Date.now(),
+            spotId,
+            bookingId,
+            spotName,
           };
-
-          // If location is already available, start navigation after a short delay
-          // (Navigation will be started by useEffect when userLocation is available)
-          if (userLocation) {
-            console.log(
-              '[homePage] ✅ User location available, will start navigation shortly...',
-            );
-          } else {
-            console.log('[homePage] ⏳ Waiting for user location...');
-          }
         }
 
-        // Clear params to avoid re-navigating on subsequent visits
         navigation.setParams({bookingLocation: undefined});
       }
     }
-  }, [route.params, navigation]);
+  }, [route.params, navigation, selectedRouteProfile]);
 
-  // Function to start pending navigation when location becomes available
-  const startPendingNavigation = React.useCallback(async currentLocation => {
-    const pending = pendingNavigationRef.current;
-    if (!pending) return;
-
-    // Check if request is too old (more than 30 seconds)
-    if (Date.now() - pending.timestamp > 30000) {
-      console.log('[homePage] ⏰ Navigation request expired, clearing...');
-      pendingNavigationRef.current = null;
-      return;
-    }
-
-    if (!currentLocation || typeof currentLocation.latitude !== 'number') {
-      console.error('[homePage] ❌ Invalid user location:', currentLocation);
-      return;
-    }
-
-    try {
-      console.log(
-        '[homePage] ✅ Starting navigation with location:',
-        currentLocation,
-      );
-      console.log('[homePage] Destination:', pending.destination);
-      // Create route from user location to booking destination with auto-start
-      await createRouterLineToDestination(
-        currentLocation,
-        pending.destination,
-        pending.routeProfile,
-        true, // autoStartNavigation = true
-      );
-      // Clear pending navigation after successful start
-      pendingNavigationRef.current = null;
-    } catch (error) {
-      console.error('[homePage] ❌ Error starting navigation:', error);
-      console.error('[homePage] Error details:', {
-        message: error?.message,
-        stack: error?.stack,
-      });
-      Alert.alert(
-        'Navigation Error',
-        error?.message || 'Failed to start navigation. Please try again.',
-      );
-      pendingNavigationRef.current = null;
-    }
-  }, []);
-
-  // Watch for userLocation changes and start pending navigation
-  React.useEffect(() => {
-    if (userLocation && pendingNavigationRef.current) {
-      console.log(
-        '[homePage] 📍 User location available, starting pending navigation...',
-      );
-      startPendingNavigation(userLocation);
-    }
-  }, [userLocation, startPendingNavigation]);
+  /* ---------------- Find Nearby Parking ---------------- */
 
   const findNearbyParking = async () => {
     if (!userLocation) {
@@ -386,18 +300,15 @@ const HomePage = ({navigation}) => {
 
     setLoadingNearby(true);
     try {
-      // Fetch all parking spots from Firestore
       const snapshot = await getDocs(collection(db, 'parking_spots'));
       const allSpots = snapshot.docs.map(doc => {
         const data = doc.data();
-        // Ensure the document ID is always used, even if data contains an id field
         return {
           ...data,
-          id: doc.id, // Always use the Firestore document ID
+          id: doc.id,
         };
       });
 
-      // Filter spots that have valid coordinates
       const validSpots = allSpots.filter(spot => {
         const lat =
           spot.latitude ||
@@ -412,18 +323,16 @@ const HomePage = ({navigation}) => {
 
       setNearbySpots(validSpots);
       setShowNearbyModal(true);
-    } catch (error) {
-      console.error('Error fetching nearby parking:', error);
+    } catch {
       Alert.alert('Error', 'Failed to fetch parking spots. Please try again.');
     } finally {
       setLoadingNearby(false);
     }
   };
-  const currentUser = getCurrentUser();
-  console.log(currentUser, 'currentUser');
+
+  /* ---------------- Start Stripe Checkout ---------------- */
 
   async function startCheckout(spot) {
-    // Show loader immediately
     setIsBookingLoading(true);
 
     try {
@@ -435,26 +344,23 @@ const HomePage = ({navigation}) => {
       }
 
       const hourlyRate = spot.pricing_hourly;
-      const amountCents = hourlyRate * 100; // Convert to cents
-      const currency = 'usd'; // Stripe doesn't support PKR, using USD
+      const amountCents = hourlyRate * 100;
+      const currency = 'usd';
 
-      // Store spot data in AsyncStorage before checkout for retrieval after payment
       try {
         await AsyncStorage.setItem(`spot_${spot.id}`, JSON.stringify(spot));
-      } catch (storageErr) {
-        console.warn('Failed to store spot data:', storageErr);
+      } catch {
+        // Not critical – spot info can be refetched
       }
 
-      // Store flag to indicate checkout is in progress (for App.tsx to show loader on return)
       try {
         await AsyncStorage.setItem('checkout_in_progress', 'true');
-      } catch (storageErr) {
-        console.warn('Failed to store checkout flag:', storageErr);
+      } catch {
+        // Non-critical – only affects loader state
       }
 
-      // Create checkout session first to get session ID
       const response = await fetch(
-        `https://us-central1-parking-app-1cb84.cloudfunctions.net/createCheckoutSession`,
+        'https://us-central1-parking-app-1cb84.cloudfunctions.net/createCheckoutSession',
         {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -469,34 +375,19 @@ const HomePage = ({navigation}) => {
       );
 
       const data = await response.json();
-      console.log('[startCheckout] Cloud function response:', data);
 
       if (!response.ok || !data.url) {
         throw new Error(data.error || 'Failed to create checkout session');
       }
 
-      // Check if sessionId is returned (new version) or use session ID from URL
       let sessionId = data.sessionId;
-      console.log('[startCheckout] SessionId from response:', sessionId);
       if (!sessionId && data.url) {
-        // Extract session ID from Stripe checkout URL as fallback
         const urlMatch = data.url.match(/\/cs_test_([a-zA-Z0-9]+)/);
         if (urlMatch) {
           sessionId = `cs_test_${urlMatch[1]}`;
-          console.log('Extracted session ID from URL:', sessionId);
         }
       }
 
-      if (!sessionId) {
-        console.warn(
-          'Warning: No session ID available. Payment record will not be created.',
-        );
-        // Still open checkout, but payment record won't be created
-        await Linking.openURL(data.url);
-        return;
-      }
-
-      // Log to AsyncStorage for persistence (survives dev tools disconnect)
       const logData = {
         timestamp: new Date().toISOString(),
         sessionId,
@@ -505,140 +396,91 @@ const HomePage = ({navigation}) => {
         amount: amountCents,
         status: 'attempting',
       };
-      try {
-        await AsyncStorage.setItem(
-          'last_payment_attempt',
-          JSON.stringify(logData),
-        );
-      } catch (e) {
-        console.warn('Failed to save payment attempt log:', e);
-      }
 
-      console.log(
-        '[startCheckout] Creating payment record with session ID:',
-        sessionId,
-      );
-      console.log('[startCheckout] User ID:', currentUser.uid);
-      console.log('[startCheckout] Spot ID:', spot.id);
-      console.log('[startCheckout] Amount (cents):', amountCents);
-
-      // Create payment record before opening checkout
-      // This ensures we track all payment attempts, even if user doesn't complete payment
-      let paymentResult = null;
-      try {
-        paymentResult = await createPaymentRecord(
-          currentUser.uid,
-          spot.id,
-          sessionId,
-          amountCents,
-          currency,
-          {
-            spot_name: spot.name || 'Parking Spot',
-            spot_address: spot.address || 'Address not available',
-          },
-        );
-
-        if (!paymentResult.success) {
-          console.error(
-            '[startCheckout] ❌ Failed to create payment record:',
-            paymentResult.error,
-          );
-          console.error(
-            '[startCheckout] Error details:',
-            JSON.stringify(paymentResult, null, 2),
-          );
-
-          // Update log with failure
-          logData.status = 'failed';
-          logData.error = paymentResult.error;
-          await AsyncStorage.setItem(
-            'last_payment_attempt',
-            JSON.stringify(logData),
-          );
-
-          // Payment record creation failed - log but continue
-          console.warn(
-            '[startCheckout] Payment record creation failed, but continuing with checkout',
-          );
-          // Continue with checkout even if payment record creation fails
-          // Booking will be created after successful payment
-        } else {
-          console.log(
-            '[startCheckout] ✅ Payment record created successfully!',
-          );
-          console.log('[startCheckout] Payment ID:', paymentResult.paymentId);
-
-          // Update log with success
-          logData.status = 'success';
-          logData.paymentId = paymentResult.paymentId;
-          await AsyncStorage.setItem(
-            'last_payment_attempt',
-            JSON.stringify(logData),
-          );
-
-          // Also store for easy checking
-          await AsyncStorage.setItem(
-            `payment_${sessionId}`,
-            paymentResult.paymentId,
-          );
-        }
-      } catch (error) {
-        console.error(
-          '[startCheckout] ❌ Exception creating payment record:',
-          error,
-        );
-        console.error('[startCheckout] Error stack:', error.stack);
-
-        // Update log with exception
-        logData.status = 'exception';
-        logData.error = error.message;
-        await AsyncStorage.setItem(
-          'last_payment_attempt',
-          JSON.stringify(logData),
-        );
-
-        // Log error but continue with checkout
-        console.error(
-          '[startCheckout] Exception creating payment record, but continuing:',
-          error,
-        );
-      }
-
-      // Store payment ID for later reference (only if payment was created successfully)
-      if (paymentResult && paymentResult.success && paymentResult.paymentId) {
+      if (sessionId) {
         try {
           await AsyncStorage.setItem(
-            `payment_${sessionId}`,
-            paymentResult.paymentId,
+            'last_payment_attempt',
+            JSON.stringify(logData),
           );
-        } catch (storageErr) {
-          console.warn('Failed to store payment ID:', storageErr);
+        } catch {
+          // Not critical
         }
       }
 
-      // Open Stripe Checkout in browser
-      console.log('[startCheckout] Opening Stripe checkout URL...');
+      let paymentResult = null;
+
+      if (sessionId) {
+        try {
+          paymentResult = await createPaymentRecord(
+            currentUser.uid,
+            spot.id,
+            sessionId,
+            amountCents,
+            currency,
+            {
+              spot_name: spot.name || 'Parking Spot',
+              spot_address: spot.address || 'Address not available',
+            },
+          );
+
+          if (paymentResult?.success) {
+            logData.status = 'success';
+            logData.paymentId = paymentResult.paymentId;
+            await AsyncStorage.setItem(
+              'last_payment_attempt',
+              JSON.stringify(logData),
+            );
+            await AsyncStorage.setItem(
+              `payment_${sessionId}`,
+              paymentResult.paymentId,
+            );
+          } else {
+            logData.status = 'failed';
+            logData.error = paymentResult?.error;
+            await AsyncStorage.setItem(
+              'last_payment_attempt',
+              JSON.stringify(logData),
+            );
+          }
+        } catch (error) {
+          logData.status = 'exception';
+          logData.error = error?.message;
+          try {
+            await AsyncStorage.setItem(
+              'last_payment_attempt',
+              JSON.stringify(logData),
+            );
+          } catch {
+            // ignore
+          }
+        }
+
+        if (paymentResult && paymentResult.success && paymentResult.paymentId) {
+          try {
+            await AsyncStorage.setItem(
+              `payment_${sessionId}`,
+              paymentResult.paymentId,
+            );
+          } catch {
+            // ignore
+          }
+        }
+      }
+
       await Linking.openURL(data.url);
-      console.log(
-        '[startCheckout] Checkout opened. Payment record status logged to AsyncStorage.',
-      );
-
-      // Keep loader visible - it will be hidden when user returns from Stripe
-      // The loader will be managed by App.tsx when deep link is received
+      // Loader will be cleared by deep-link handler in App after payment.
     } catch (err) {
-      console.error('startCheckout error:', err);
       setIsBookingLoading(false);
-
-      // Clear checkout flag on error
       try {
         await AsyncStorage.removeItem('checkout_in_progress');
-      } catch (e) {
-        console.warn('Failed to clear checkout flag:', e);
+      } catch {
+        // ignore
       }
 
       Alert.alert(
         'Error',
-        err.message || 'Unable to start checkout. Please try again.',
+        err?.message || 'Unable to start checkout. Please try again.',
       );
     }
   }
@@ -648,6 +490,8 @@ const HomePage = ({navigation}) => {
     startCheckout(spot);
   };
 
+  /* ---------------- Save Spot For Later ---------------- */
+
   const handleSaveForLater = async spot => {
     const currentUser = getCurrentUser();
     if (!currentUser) {
@@ -655,12 +499,8 @@ const HomePage = ({navigation}) => {
       return;
     }
 
-    // Prevent multiple simultaneous saves
-    if (savingSpot) {
-      return;
-    }
+    if (savingSpot) return;
 
-    // Extract spot name for personalized message
     const spotName =
       spot?.name ||
       spot?.location?.name ||
@@ -674,7 +514,6 @@ const HomePage = ({navigation}) => {
       if (result.success) {
         Alert.alert('Saved!', `${spotName} has been saved for later.`);
       } else {
-        // Handle specific error cases
         const errorMsg = result.error || 'Could not save parking spot';
         if (errorMsg.toLowerCase().includes('already saved')) {
           Alert.alert(
@@ -685,34 +524,33 @@ const HomePage = ({navigation}) => {
           Alert.alert('Unable to Save', errorMsg);
         }
       }
-    } catch (error) {
+    } catch {
       Alert.alert(
         'Error',
         'Failed to save parking spot. Please check your connection and try again.',
       );
-      console.error('Save error:', error);
     } finally {
       setSavingSpot(false);
     }
   };
 
+  /* ---------------- Geocoding & Suggestions ---------------- */
+
   const geocodeAddress = async address => {
     try {
-      // Use LocationIQ forward geocoding (search) to get coordinates
       const resp = await fetch(
         `https://api.locationiq.com/v1/search.php?key=pk.8d19b1ef7170725976c6f53e5c97774c&q=${encodeURIComponent(
           address,
         )}&format=json&limit=1`,
       );
       const data = await resp.json();
-      let latitude, longitude;
+      let latitude;
+      let longitude;
 
       if (Array.isArray(data) && data.length > 0) {
-        const item = data[0];
-        latitude = parseFloat(item.lat);
-        longitude = parseFloat(item.lon);
+        latitude = parseFloat(data[0].lat);
+        longitude = parseFloat(data[0].lon);
       } else if (data && data.lat && data.lon) {
-        // sometimes LocationIQ may return an object
         latitude = parseFloat(data.lat);
         longitude = parseFloat(data.lon);
       } else {
@@ -720,15 +558,10 @@ const HomePage = ({navigation}) => {
         return;
       }
 
-      // Update location state
       const newLocation = {latitude, longitude};
       setUserLocation(newLocation);
-
-      // Set destination coords to show the parking icon at searched location
-      setDestinationCoords([longitude, latitude]);
       setZoom(15);
 
-      // Immediately move camera to the geocoded location
       if (cameraRef.current) {
         try {
           cameraRef.current.setCamera({
@@ -737,11 +570,11 @@ const HomePage = ({navigation}) => {
             animationMode: 'flyTo',
             animationDuration: 1000,
           });
-        } catch (e) {
-          console.warn('Camera update error:', e);
+        } catch {
+          // ignore
         }
       }
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Failed to search location.');
     }
   };
@@ -751,154 +584,8 @@ const HomePage = ({navigation}) => {
       Alert.alert('No route', 'Please select a route first.');
       return;
     }
-    setIsNavigating(!isNavigating);
+    setIsNavigating(current => !current);
   }
-
-  function makeRouterFeature(coordinates) {
-    let routerFeature = {
-      type: 'FeatureCollection',
-      features: [
-        {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'LineString',
-            coordinates: coordinates,
-          },
-        },
-      ],
-    };
-    return routerFeature;
-  }
-
-  // Create route to a specific destination
-  async function createRouterLineToDestination(
-    startCoords,
-    destination,
-    routeProfile,
-    autoStartNavigation = false,
-  ) {
-    // Validate inputs
-    if (
-      !startCoords ||
-      typeof startCoords.latitude !== 'number' ||
-      typeof startCoords.longitude !== 'number'
-    ) {
-      console.error('[homePage] ❌ Invalid start coordinates:', startCoords);
-      throw new Error(
-        'Invalid start location. Please enable location services.',
-      );
-    }
-
-    if (
-      !destination ||
-      typeof destination.latitude !== 'number' ||
-      typeof destination.longitude !== 'number'
-    ) {
-      console.error(
-        '[homePage] ❌ Invalid destination coordinates:',
-        destination,
-      );
-      throw new Error('Invalid destination location.');
-    }
-
-    const start = `${startCoords.longitude},${startCoords.latitude}`;
-    const end = `${destination.longitude},${destination.latitude}`;
-    const geometries = 'geojson';
-    const url = `https://api.mapbox.com/directions/v5/mapbox/${routeProfile}/${start};${end}?alternatives=true&geometries=${geometries}&steps=true&banner_instructions=true&overview=full&voice_instructions=true&access_token=${APIKEY}`;
-
-    console.log(
-      '[homePage] Creating route from:',
-      start,
-      'to:',
-      end,
-      'profile:',
-      routeProfile,
-    );
-
-    try {
-      let response = await fetch(url);
-      let json = await response.json();
-
-      if (!json.routes || !json.routes[0]) {
-        console.error('[homePage] ❌ No route found in response:', json);
-        if (json.code && json.message) {
-          throw new Error(`Route error: ${json.message}`);
-        }
-        throw new Error(
-          'No route found. Please check your start and destination locations.',
-        );
-      }
-
-      const routeData = json.routes[0];
-      setDistance((routeData.distance / 1000).toFixed(1));
-
-      // Convert duration from seconds to hours and minutes
-      const totalSeconds = routeData.duration;
-      const hours = Math.floor(totalSeconds / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      if (hours > 0) {
-        setDuration(`${hours}H ${minutes} MIN`);
-      } else {
-        setDuration(`${minutes} MIN`);
-      }
-
-      let coordinates = routeData.geometry.coordinates;
-      let destinationCoordinates = coordinates.slice(-1)[0];
-      let steps = json.routes[0].legs[0].steps;
-
-      console.log('[homePage] Route created successfully:', {
-        distance: (routeData.distance / 1000).toFixed(1) + ' km',
-        duration: `${hours}H ${minutes} MIN`,
-        steps: steps.length,
-        destinationCoordinates,
-      });
-
-      setCurrentStep(steps);
-      setRouteSteps(steps);
-      setDestinationCoords(destinationCoordinates);
-
-      if (coordinates.length) {
-        const routerFeature = makeRouterFeature([...coordinates]);
-        setRouteDirections(routerFeature);
-
-        // Start navigation automatically if requested
-        if (autoStartNavigation) {
-          setTimeout(() => {
-            setIsNavigating(true);
-            console.log('[homePage] ✅ Navigation started successfully');
-          }, 300);
-        }
-      }
-      setLoading(false);
-    } catch (e) {
-      setLoading(false);
-      console.error('[homePage] ❌ Error creating route:', e);
-      Alert.alert(
-        'Navigation Error',
-        'Failed to create route. Please try again.',
-      );
-    }
-  }
-
-  // Consolidated route creation - uses createRouterLineToDestination internally
-  // async function createRouterLine(coords, routeProfile) {
-  //   // Check if coords are valid
-  //   if (!coords || !coords.latitude || !coords.longitude) {
-  //     console.error('[homePage] ❌ Invalid coordinates for route creation:', coords);
-  //     Alert.alert('Location Error', 'Current location is not available. Please enable location services.');
-  //     return;
-  //   }
-
-  //   // Default destination (can be overridden by destinationCoords state)
-  //   const defaultDestination = {latitude: 24.80234, longitude: 67.03005};
-  //   const destination = destinationCoords && destinationCoords.length === 2
-  //     ? {latitude: destinationCoords[1], longitude: destinationCoords[0]}
-  //     : defaultDestination;
-
-  //   console.log('[homePage] createRouterLine called with:', {coords, destination, routeProfile});
-  //   await createRouterLineToDestination(coords, destination, routeProfile, false); // false = don't auto-start navigation
-  // }
 
   const fetchSuggestions = async text => {
     if (!text.trim()) {
@@ -911,10 +598,8 @@ const HomePage = ({navigation}) => {
         `https://api.locationiq.com/v1/autocomplete?key=pk.8d19b1ef7170725976c6f53e5c97774c&q=${text}&limit=5&dedupe=1`,
       );
       const data = await resp.json();
-      // Normalize data from different providers:
-      // - LocationIQ autocomplete returns an Array of places (top-level array)
-      // - Mapbox returns an object with `features` array
       let normalized = [];
+
       if (Array.isArray(data)) {
         normalized = data.map(item => ({
           id: item.place_id || item.osm_id || `${item.lat}-${item.lon}`,
@@ -939,36 +624,26 @@ const HomePage = ({navigation}) => {
 
       setSuggestions(normalized);
       setShowSuggestions(normalized.length > 0);
-    } catch (e) {
+    } catch {
       setSuggestions([]);
       setShowSuggestions(false);
     }
   };
 
-  // When user selects a suggestion (normalized item)
   const handleSuggestionPress = item => {
-    // Close suggestions immediately to prevent conflicts
     setSuggestions([]);
     setShowSuggestions(false);
 
-    // If we have explicit coordinates, use them. Otherwise fall back to geocoding by name.
     if (item && item.lat != null && item.lon != null) {
       const lat = Number(item.lat);
       const lon = Number(item.lon);
 
-      // Update location state
-      const newLocation = {
-        latitude: lat,
-        longitude: lon,
-      };
+      const newLocation = {latitude: lat, longitude: lon};
       setUserLocation(newLocation);
+      setSearchedLocation(newLocation); // Marker will use this
+      setZoom(14);
+      setSearch(item.place_name || item.raw?.display_name || '');
 
-      // Set destination coords to show the parking icon at searched location
-      setDestinationCoords([lon, lat]);
-      setZoom(15);
-      setSearch(item.place_name || (item.raw && item.raw.display_name) || '');
-
-      // Immediately move camera to the selected location
       if (cameraRef.current) {
         try {
           cameraRef.current.setCamera({
@@ -977,45 +652,109 @@ const HomePage = ({navigation}) => {
             animationMode: 'flyTo',
             animationDuration: 1000,
           });
-        } catch (e) {
-          console.warn('Camera update error:', e);
+        } catch {
+          // ignore
         }
       }
-    } else if (
-      item &&
-      (item.place_name || (item.raw && item.raw.display_name))
-    ) {
-      const name = item.place_name || (item.raw && item.raw.display_name);
+    } else if (item?.place_name || item?.raw?.display_name) {
+      const name = item.place_name || item.raw.display_name;
       setSearch(name);
-      // Try geocoding the name as fallback
       geocodeAddress(name);
     }
   };
 
-  // Camera center: user location or initial
+  /* ---------------- Camera behavior ---------------- */
+
   const cameraCenter = userLocation
     ? [userLocation.longitude, userLocation.latitude]
     : [INITIAL_COORDINATE.longitude, INITIAL_COORDINATE.latitude];
 
-  // Camera ref to programmatically move camera when needed
-  const cameraRef = useRef(null);
-
-  // When userLocation changes, ensure camera moves to that location
   useEffect(() => {
     if (!userLocation || !cameraRef.current) return;
     try {
-      // setCamera is supported by the MapboxGL Camera ref in @rnmapbox/maps
       cameraRef.current.setCamera({
         centerCoordinate: [userLocation.longitude, userLocation.latitude],
         zoomLevel: zoom,
         animationMode: 'flyTo',
         animationDuration: 1000,
       });
-    } catch (e) {
-      // fallback: rely on prop change (centerCoordinate) which is already wired
-      // console.warn if needed
+    } catch {
+      // ignore
     }
   }, [userLocation, zoom]);
+
+  /* ---------------- Logout ---------------- */
+
+  const handleLogout = async () => {
+    try {
+      const currentUser = getCurrentUser();
+
+      if (currentUser) {
+        try {
+          await deleteFCMTokenFromFirestore(currentUser.uid);
+          await deleteLocalFCMToken();
+        } catch {
+          // Token deletion shouldn't block logout
+        }
+      }
+
+      await signOut();
+      Alert.alert('Signed out', 'You have been logged out.');
+      navigation.reset({index: 0, routes: [{name: 'login'}]});
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Failed to log out');
+    }
+  };
+
+  /* ---------------- Navigation Step Updates ---------------- */
+
+  function handleNavigationUpdate(location) {
+    if (!currentStep) return;
+
+    const userLng = location.coords.longitude;
+    const userLat = location.coords.latitude;
+
+    cameraRef.current?.setCamera({
+      centerCoordinate: isNavigating ? [userLng, userLat] : undefined,
+      zoomLevel: isNavigating ? 16 : 14,
+      pitch: isNavigating ? 70 : 0,
+      animationMode: 'flyTo',
+      animationDuration: 1000,
+    });
+
+    const nextStep = currentStep[0];
+    const [endLng, endLat] = nextStep.maneuver.location;
+
+    const dist = getDistance(userLat, userLng, endLat, endLng);
+
+    if (dist < 20) {
+      currentStep.shift();
+
+      if (currentStep.length === 0) {
+        Alert.alert('Arrived!', 'You reached your destination.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              const pending = pendingNavigationRef.current;
+              if (pending && (pending.spotId || pending.bookingId)) {
+                setCurrentBookingForReview({
+                  spotId: pending.spotId,
+                  bookingId: pending.bookingId,
+                  spotName: pending.spotName,
+                });
+                setShowReviewForm(true);
+              }
+            },
+          },
+        ]);
+        setIsNavigating(false);
+      } else {
+        setCurrentStep([...currentStep]);
+      }
+    }
+  }
+
+  /* ---------------- Loading Screen ---------------- */
 
   if (loading) {
     return (
@@ -1025,88 +764,16 @@ const HomePage = ({navigation}) => {
     );
   }
 
-  const handleLogout = async () => {
-    try {
-      const currentUser = getCurrentUser();
-
-      // Delete FCM token before logout
-      if (currentUser) {
-        try {
-          await deleteFCMTokenFromFirestore(currentUser.uid);
-          await deleteLocalFCMToken();
-          console.log('FCM token deleted on logout');
-        } catch (fcmError) {
-          console.error('Error deleting FCM token:', fcmError);
-          // Don't block logout if FCM deletion fails
-        }
-      }
-
-      await signOut();
-      Alert.alert('Signed out', 'You have been logged out.');
-      // send user to the login screen and clear history
-      navigation.reset({index: 0, routes: [{name: 'login'}]});
-    } catch (e) {
-      Alert.alert('Error', e?.message || 'Failed to log out');
-    }
-  };
-
-  function handleNavigationUpdate(location) {
-    if (!currentStep) return;
-
-    const userLng = location.coords.longitude;
-    const userLat = location.coords.latitude;
-
-    // Move camera to follow user
-    cameraRef.current?.setCamera({
-      centerCoordinate: isNavigating && [userLng, userLat],
-      zoomLevel: isNavigating ? 16 : 14,
-      pitch: isNavigating ? 70 : 0,
-      animationMode: 'flyTo',
-      animationDuration: 1000,
-    });
-
-    // Check if user reached next step
-    const nextStep = currentStep[0];
-    const [endLng, endLat] = nextStep.maneuver.location;
-
-    const distance = getDistance(userLat, userLng, endLat, endLng);
-
-    if (distance < 20) {
-      // Step complete → move to next
-      currentStep.shift();
-
-      if (currentStep.length === 0) {
-        Alert.alert('Arrived!', 'You reached your destination.');
-        setIsNavigating(false);
-      } else {
-        setCurrentStep([...currentStep]);
-      }
-    }
-  }
-
-  function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371e3;
-    const φ1 = (lat1 * Math.PI) / 180;
-    const φ2 = (lat2 * Math.PI) / 180;
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // meters
-  }
+  /* ---------------- Render ---------------- */
 
   return (
     <View style={styles.container}>
-      {/* Top Header with Search and Menu Icons */}
+      {/* Top Header */}
       <View style={styles.topHeader}>
         <TouchableOpacity
           style={styles.iconButton}
           onPress={() => {
-            setShowSearchBar(!showSearchBar);
+            setShowSearchBar(prev => !prev);
             setShowDropdown(false);
           }}>
           <Image
@@ -1114,6 +781,7 @@ const HomePage = ({navigation}) => {
             style={styles.iconButtonImage}
           />
         </TouchableOpacity>
+
         <TouchableOpacity
           style={!loadingNearby ? styles.findNearbyButton : {}}
           onPress={findNearbyParking}
@@ -1121,11 +789,18 @@ const HomePage = ({navigation}) => {
           {loadingNearby ? (
             <ActivityIndicator color="#999" />
           ) : (
-            <Text style={styles.findNearbyButtonText}>
-              🚗 Find Parking Near Me
-            </Text>
+            <>
+              <Image
+                source={require('../assets/findparking.png')}
+                style={styles.findNearbyButtonIcon}
+              />
+              <Text style={styles.findNearbyButtonText}>
+                Find Parking Near Me
+              </Text>
+            </>
           )}
         </TouchableOpacity>
+
         <View style={styles.iconButtonContainer}>
           <TouchableOpacity
             style={styles.iconButton}
@@ -1133,23 +808,21 @@ const HomePage = ({navigation}) => {
               setShowNotificationInbox(true);
               setShowDropdown(false);
               setShowSearchBar(false);
-              // Refresh unread count when opening inbox
+
               const currentUser = getCurrentUser();
               if (currentUser) {
                 try {
                   const count = await getUnreadCount(currentUser.uid);
                   setUnreadCount(count);
-                } catch (error) {
-                  console.error('Error refreshing unread count:', error);
+                } catch {
+                  // ignore
                 }
               }
             }}>
-            <Text style={styles.bellIcon}>
-              <Image
-                source={require('../assets/notification.png')}
-                style={styles.iconButtonImage}
-              />
-            </Text>
+            <Image
+              source={require('../assets/notification.png')}
+              style={styles.iconButtonImage}
+            />
             {unreadCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>
@@ -1159,10 +832,11 @@ const HomePage = ({navigation}) => {
             )}
           </TouchableOpacity>
         </View>
+
         <TouchableOpacity
           style={styles.iconButton}
           onPress={() => {
-            setShowDropdown(!showDropdown);
+            setShowDropdown(prev => !prev);
             setShowSearchBar(false);
             setShowNotificationInbox(false);
           }}>
@@ -1188,6 +862,7 @@ const HomePage = ({navigation}) => {
             />
             <Text style={styles.dropdownText}>Edit Profile</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.dropdownItem}
             onPress={() => {
@@ -1200,6 +875,7 @@ const HomePage = ({navigation}) => {
             />
             <Text style={styles.dropdownText}>Saved Spots</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.dropdownItem}
             onPress={() => {
@@ -1212,6 +888,7 @@ const HomePage = ({navigation}) => {
             />
             <Text style={styles.dropdownText}>My Bookings</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.dropdownItem}
             onPress={() => {
@@ -1224,6 +901,7 @@ const HomePage = ({navigation}) => {
             />
             <Text style={styles.dropdownText}>Billing History</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={[styles.dropdownItem, styles.dropdownItemLast]}
             onPress={() => {
@@ -1239,7 +917,7 @@ const HomePage = ({navigation}) => {
         </View>
       )}
 
-      {/* Search Bar - Shown when search icon is clicked */}
+      {/* Search Bar */}
       {showSearchBar && (
         <View style={styles.searchContainer}>
           <TextInput
@@ -1255,11 +933,10 @@ const HomePage = ({navigation}) => {
               if (suggestions.length > 0) setShowSuggestions(true);
             }}
             onBlur={() => {
-              // Use a longer delay to allow click events to process first
               setTimeout(() => setShowSuggestions(false), 300);
             }}
             returnKeyType="search"
-            autoFocus={true}
+            autoFocus
           />
           <TouchableOpacity
             style={styles.closeSearchButton}
@@ -1275,7 +952,7 @@ const HomePage = ({navigation}) => {
         </View>
       )}
 
-      {/* Suggestions dropdown - shown when search bar is visible */}
+      {/* Suggestions Dropdown */}
       {showSearchBar && showSuggestions && suggestions.length > 0 && (
         <View style={styles.suggestionsDropdown} pointerEvents="box-none">
           {suggestions.map(item => (
@@ -1283,22 +960,18 @@ const HomePage = ({navigation}) => {
               key={item.id}
               style={styles.suggestionItem}
               activeOpacity={0.7}
-              onPressIn={() => {
-                // Prevent onBlur from hiding suggestions when clicking
-                setShowSuggestions(true);
-              }}
+              onPressIn={() => setShowSuggestions(true)}
               onPress={() => {
-                // Handle the selection immediately
                 handleSuggestionPress(item);
                 setShowSearchBar(false);
                 setShowSuggestions(false);
               }}>
               <Text numberOfLines={2}>
                 {item.place_name ||
-                  (item.raw && item.raw.display_name) ||
-                  'Unknown'}
+                  item.raw?.display_name ||
+                  'Unknown location'}
               </Text>
-              {item.raw && item.raw.address && item.raw.address.country && (
+              {item.raw?.address?.country && (
                 <Text style={{fontSize: 12, color: '#666'}}>
                   {item.raw.address.country}
                 </Text>
@@ -1321,6 +994,8 @@ const HomePage = ({navigation}) => {
           -
         </Text>
       </View>
+
+      {/* Current Location Button */}
       <View style={styles.currentLocationButtonContainer}>
         <TouchableOpacity
           style={styles.currentLocationButton}
@@ -1331,6 +1006,8 @@ const HomePage = ({navigation}) => {
           />
         </TouchableOpacity>
       </View>
+
+      {/* Navigation Instruction Banner */}
       {isNavigating && currentStep && (
         <View style={styles.navInstructionWrap} pointerEvents="box-none">
           <View style={styles.navInstructionInner}>
@@ -1369,11 +1046,12 @@ const HomePage = ({navigation}) => {
         </View>
       )}
 
+      {/* Map */}
       <MapboxGL.MapView
         style={{flex: 1}}
-        rotateEnabled={true}
+        rotateEnabled
         styleURL="mapbox://styles/mapbox/navigation-night-v1"
-        zoomEnabled={true}>
+        zoomEnabled>
         <MapboxGL.Camera
           ref={cameraRef}
           zoomLevel={zoom}
@@ -1381,41 +1059,19 @@ const HomePage = ({navigation}) => {
           animationMode="flyTo"
           animationDuration={6000}
         />
-
-        {/* {routeDirections && (
-          <MapboxGL.ShapeSource id="line1" shape={routeDirections}>
-            <MapboxGL.LineLayer
-              id="routerLine01"
-              style={{
-                lineColor: '#142ffa',
-                lineWidth: 8,
-              }}
-            />
-          </MapboxGL.ShapeSource>
+        {searchedLocation && (
+          <MapboxGL.PointAnnotation
+            id="searched-location"
+            coordinate={[searchedLocation.longitude, searchedLocation.latitude]}
+          />
         )}
 
-        {destinationCoords && (
-          <MapboxGL.PointAnnotation
-            id="parking-location"
-            coordinate={[destinationCoords[0], destinationCoords[1]]}>
-            <View style={styles.destinationIcon}>
-              <Image
-                source={require('../assets/parking.png')}
-                style={styles.parking}
-              />
-            </View>
-          </MapboxGL.PointAnnotation>
-        )} */}
         <MapboxGL.UserLocation
-          animated={true}
-          androidRenderMode={'gps'}
-          showsUserHeadingIndicator={true}
-          onUpdate={loc => {
-            handleNavigationUpdate(loc);
-          }}
+          animated
+          androidRenderMode="gps"
+          showsUserHeadingIndicator
+          onUpdate={handleNavigationUpdate}
         />
-
-        {/* Show parking spots */}
       </MapboxGL.MapView>
 
       {/* Nearby Parking Modal */}
@@ -1444,33 +1100,28 @@ const HomePage = ({navigation}) => {
         visible={showNotificationInbox}
         onClose={async () => {
           setShowNotificationInbox(false);
-          // Reload unread count when closing
           const currentUser = getCurrentUser();
           if (currentUser) {
             try {
               const count = await getUnreadCount(currentUser.uid);
               setUnreadCount(count);
-              console.log('Unread count refreshed:', count);
-            } catch (error) {
-              console.error('Error refreshing unread count:', error);
+            } catch {
+              // ignore
             }
           }
         }}
         onReadChange={async () => {
-          // Refresh unread count when notification is marked as read
           const currentUser = getCurrentUser();
           if (currentUser) {
             try {
               const count = await getUnreadCount(currentUser.uid);
               setUnreadCount(count);
-              console.log('Unread count updated after read:', count);
-            } catch (error) {
-              console.error('Error refreshing unread count:', error);
+            } catch {
+              // ignore
             }
           }
         }}
         onNotificationTap={notification => {
-          // Navigate to saved spot when notification is tapped
           if (notification.saved_spot_id) {
             setShowSavedSpots(true);
             setSavedSpotToOpen(notification.saved_spot_id);
@@ -1487,6 +1138,26 @@ const HomePage = ({navigation}) => {
             <Text style={styles.loaderSubtext}>Please wait</Text>
           </View>
         </View>
+      )}
+
+      {/* Review Form Modal */}
+      {currentBookingForReview && (
+        <ReviewFormModal
+          visible={showReviewForm}
+          onClose={() => {
+            setShowReviewForm(false);
+            setCurrentBookingForReview(null);
+            pendingNavigationRef.current = null;
+          }}
+          spotId={currentBookingForReview.spotId}
+          spotName={currentBookingForReview.spotName}
+          bookingId={currentBookingForReview.bookingId}
+          onReviewSubmitted={() => {
+            setShowReviewForm(false);
+            setCurrentBookingForReview(null);
+            pendingNavigationRef.current = null;
+          }}
+        />
       )}
     </View>
   );
@@ -1517,31 +1188,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     zIndex: 1,
   },
-  searchBar: {
-    backgroundColor: '#fff',
-    borderColor: 'grey',
-    borderWidth: 1,
-    borderRadius: 50,
-    padding: 12,
-    margin: 16,
-    fontSize: 16,
-    zIndex: 2,
-    position: 'absolute',
-    top: 20,
-    left: 0,
-    right: 0,
-    marginHorizontal: 16,
-    elevation: 2,
-  },
   suggestionsDropdown: {
     position: 'absolute',
-    top: 200,
+    top: 150,
     left: 16,
     right: 16,
     backgroundColor: '#fff',
     borderRadius: 8,
     zIndex: 97,
-    maxHeight: 300,
+    maxHeight: 400,
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 2},
@@ -1611,7 +1266,6 @@ const styles = StyleSheet.create({
     zIndex: 3,
     borderRadius: 8,
     padding: 4,
-    display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1670,7 +1324,6 @@ const styles = StyleSheet.create({
     zIndex: 5,
     elevation: 2,
   },
-  // Top Header Styles
   topHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1727,7 +1380,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  // Dropdown Menu Styles
   dropdownMenu: {
     position: 'absolute',
     top: 50,
@@ -1771,7 +1423,6 @@ const styles = StyleSheet.create({
   logoutText: {
     color: '#F44336',
   },
-  // Search Container Styles
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1813,7 +1464,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
   },
-  // Action Buttons Container
   actionButtonsContainer: {
     paddingHorizontal: 16,
     paddingTop: 12,
@@ -1879,11 +1529,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  findNearbyButtonIcon: {
+    width: '20',
+    height: '20',
+    paddingRight: '8',
   },
   findNearbyButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+    display: 'flex',
+    justifyContent: 'center',
+    gap: 4,
   },
   savedSpotsButton: {
     backgroundColor: '#FFA500',
@@ -1951,8 +1611,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 16,
   },
-
-  /* Navigation instruction banner */
   navInstructionWrap: {
     position: 'absolute',
     top: 16,
@@ -2026,23 +1684,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'transparent',
   },
-
   selectedRouteProfileButton: {
     backgroundColor: '#fff',
     borderColor: '#fff',
   },
-
   routeProfileButtonText: {
     color: '#fff',
     marginTop: 5,
     fontSize: 12,
     fontWeight: '600',
   },
-
   selectedRouteProfileButtonText: {
     color: '#000',
   },
-  // Bottom Route Card Styles
   bottomRouteCard: {
     position: 'absolute',
     bottom: 0,
@@ -2177,23 +1831,13 @@ const styles = StyleSheet.create({
     color: '#007AFF',
   },
   startBtn: {
-    // flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0A84FF',
-    width: 'fitContent',
     paddingVertical: 10,
-    // paddingHorizontal: 24,
     borderRadius: 30,
-    // alignSelf: 'center',
-    // elevation: 4,
-    // shadowColor: '#000',
-    // shadowOpacity: 0.2,
-    // shadowRadius: 4,
     marginBottom: 16,
-    // shadowOffset: {width: 0, height: 2},
   },
-
   startBtnText: {
     color: '#fff',
     fontSize: 16,
